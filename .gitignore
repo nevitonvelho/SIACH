@@ -40,3 +40,6 @@ Thumbs.db
 .ruff_cache/
 htmlcov/
 .coverage
+
+# Dataset bruto (download)
+data/german_credit.csv
