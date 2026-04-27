@@ -1,0 +1,27 @@
+{% set queda_significativa = var_produtividade_pct < -10 -%}
+{% set tem_renegociacoes = renegociacoes_recentes > 0 -%}
+{% if tipo_cliente == "PF" -%}
+Solicitante (Pessoa Física) de {{ idade }} anos, {{ estado_civil }}, residente em {{ uf }}, com ocupação "{{ cnae_ocupacao }}". Possui {{ dependentes }}
+{%- if dependentes == 1 %} dependente{% else %} dependentes{% endif %}.
+{%- else -%}
+Solicitante (Pessoa Jurídica) sediado(a) em {{ uf }}, atuando no setor "{{ cnae_ocupacao }}".
+{%- endif %}
+Atividade rural principal: {{ atividade_principal }}, em propriedade de {{ "%.1f"|format(area_propriedade_ha) }} hectares.
+Renda anual de R$ {{ "{:,.2f}".format(renda_anual).replace(',', 'X').replace('.', ',').replace('X', '.') }}.
+{% if queda_significativa -%}
+Apresenta queda significativa de produtividade ({{ "%.1f"|format(var_produtividade_pct) }}%) em relação ao ciclo anterior.
+{%- elif var_produtividade_pct < 0 -%}
+Apresenta leve redução de produtividade ({{ "%.1f"|format(var_produtividade_pct) }}%).
+{%- else -%}
+Produtividade estável ou em crescimento ({{ "%.1f"|format(var_produtividade_pct) }}%).
+{% endif %}
+{% if tem_renegociacoes -%}
+Possui {{ renegociacoes_recentes }}
+{%- if renegociacoes_recentes == 1 %} renegociação recente{% else %} renegociações recentes{% endif -%}
+.
+{% endif -%}
+Dívida em aberto de R$ {{ "{:,.2f}".format(divida_aberto).replace(',', 'X').replace('.', ',').replace('X', '.') }}.
+Solicita R$ {{ "{:,.2f}".format(valor_solicitado).replace(',', 'X').replace('.', ',').replace('X', '.') }} para {{ finalidade|replace('_', ' ') }} (submodalidade {{ submodalidade }}),
+prazo de {{ prazo_meses }} meses, garantia: {{ tipo_garantia|replace('_', ' ') }}.
+Score interno {{ score_interno }}.
+Tempo de atividade/emprego formal: {{ tempo_emprego_meses }} meses.
