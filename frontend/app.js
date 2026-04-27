@@ -139,3 +139,42 @@ function escapeHtml(s) {
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   })[c]);
 }
+
+const histRoot = document.getElementById('historico-root');
+if (histRoot) {
+  fetch('/historico?limit=100').then(r => r.json()).then(items => {
+    document.getElementById('historico-conteudo').innerHTML = renderHistorico(items);
+  });
+}
+
+function renderHistorico(items) {
+  if (!items.length) return '<p class="text-muted">Nenhuma análise registrada ainda.</p>';
+  return `
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Data</th>
+          <th>Atividade</th>
+          <th>Valor solicitado</th>
+          <th>Recomendação</th>
+          <th>Confiança</th>
+          <th>Feedback</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(it => `
+          <tr>
+            <td>${it.id}</td>
+            <td>${new Date(it.timestamp).toLocaleString('pt-BR')}</td>
+            <td>${escapeHtml(it.dados_solicitante.atividade_principal || '—')}</td>
+            <td>R$ ${(it.dados_solicitante.valor_solicitado || 0).toLocaleString('pt-BR')}</td>
+            <td><span class="recomendacao-${it.recomendacao}">${it.recomendacao.replace(/_/g, ' ')}</span></td>
+            <td>${(it.confianca * 100).toFixed(0)}%</td>
+            <td>${escapeHtml(it.status_feedback)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
