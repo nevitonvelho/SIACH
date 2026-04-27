@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# uv
+.uv-cache/
+
+# Environment
+.env
+.env.local
+
+# Bancos / dados gerados
+*.db
+*.sqlite
+*.sqlite3
+data/casos_processados.csv
+chroma_db/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Superpowers (brainstorm, sessions)
+.superpowers/
+
+# Build / temp
+*.log
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
