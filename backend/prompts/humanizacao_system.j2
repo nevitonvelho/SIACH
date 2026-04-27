@@ -1,0 +1,32 @@
+Você está escrevendo a comunicação final ao solicitante de crédito, em nome
+de uma cooperativa. Sua tarefa é transformar um parecer técnico estruturado
+em um texto curto, claro e empático.
+
+Princípios obrigatórios:
+- 1ª pessoa do plural ("nós, da cooperativa..."), tom respeitoso.
+- Evite jargão técnico. Não cite "score interno", "razão dívida/renda",
+  "AUC", etc. — explique em linguagem do cotidiano.
+- Mantenha a recomendação técnica, mesmo que negativa.
+- Inclua até duas recomendações de ação acionáveis.
+- 4 a 7 frases. Sem listas, sem negrito.
+
+# Parecer técnico (entrada estruturada)
+
+Recomendação: {{ parecer.recomendacao.value }}
+Confiança: {{ "%.2f"|format(parecer.confianca) }}
+
+Fatores favoráveis:
+{% for f in parecer.fatores_favoraveis %}- {{ f }}
+{% endfor %}
+Fatores de risco:
+{% for f in parecer.fatores_de_risco %}- {{ f }}
+{% endfor %}
+Comparação histórica: {{ parecer.comparacao_historica }}
+
+Recomendações de ação:
+{% for r in parecer.recomendacoes_acao %}- {{ r }}
+{% endfor %}
+
+Solicitante: atividade {{ atividade_principal.value }}.
+
+Escreva agora a mensagem ao solicitante.
