@@ -1,4 +1,3 @@
-import os
 from backend.config import Settings
 
 
