@@ -14,7 +14,7 @@
 - `uv` instalado (`curl -LsSf https://astral.sh/uv/install.sh | sh` ou `pip install uv`).
 - Chave de API Anthropic (`ANTHROPIC_API_KEY`).
 - Chave de API Voyage (`VOYAGE_API_KEY`). Se ainda não tem, segue com `EMBEDDINGS_PROVIDER=local` na S2 e troca depois.
-- Dataset German Credit Data baixado de Kaggle (`statlog-german-credit-data` — arquivo `german_credit_data.csv`, ~1.000 linhas). O dataset tem 20+ colunas; só usamos um subconjunto.
+- Arquivos brutos SCR/BCB 2025 em `data/scrdata_2025/` (12 arquivos .csv, ~1.2 GB total). Gerados pelo `data/load_scrbcb.py` que produz `data/casos_processados.csv` com 5.000 casos sintéticos calibrados pelos dados reais do Banco Central.
 
 ---
 
@@ -50,8 +50,8 @@ backend/
     load_data.py                — CSV → SQLite + Chroma
 
 data/
-  download_german_credit.py     — script de download
-  seed_synthetic.py             — gera 4 campos rurais sintéticos
+  load_scrbcb.py                — carrega SCR/BCB 2025 e gera casos sintéticos calibrados
+  scrdata_2025/                 — arquivos brutos BCB (~1.2 GB, no .gitignore)
 
 frontend/
   index.html                    — formulário de nova análise
@@ -686,289 +686,256 @@ git commit -m "feat: schemas Pydantic (SolicitacaoCredito, ParecerTecnico, Feedb
 
 ---
 
-## Task 1.5: Script de download do German Credit Data
+## Task 1.5: Carregar SCR/BCB e gerar casos sintéticos calibrados
 
 **Files:**
-- Create: `data/download_german_credit.py`
-- Modify: `.gitignore` (adicionar `data/german_credit.csv`)
+- Create: `data/load_scrbcb.py`
+- Modify: `.gitignore` (já contém `data/scrdata_2025/`)
 
-- [ ] **Step 1: Adicionar ao .gitignore**
+Os arquivos brutos do SCR já estão em `C:/Users/nevit/code/tcc/data/scrdata_2025/scrdata_2025{01..12}.csv` (12 arquivos, ~100MB cada). Cada arquivo tem ~300k linhas; cada linha é um BUCKET agregado (UF + segmento + cliente + CNAE + porte + modalidade + submodalidade + origem + indexador) com totais (numero_de_operacoes, carteira_ativa, carteira_inadimplencia, etc.).
 
-Adicionar essas linhas ao final de `.gitignore`:
-```
-# Dataset bruto (download)
-data/german_credit.csv
-```
+Estratégia: filtrar pela modalidade "Financiamentos rurais  (ex-financiamentos rurais e agroindustriais)" e gerar até 5 casos individuais sintéticos por bucket, calibrados pelos totais do bucket.
 
-- [ ] **Step 2: Implementar download**
+- [x] **Step 1: Implementar `data/load_scrbcb.py`**
 
-`data/download_german_credit.py`:
 ```python
 """
-Baixa o German Credit Data e converte para CSV padronizado.
-Fonte: UCI ML Repository — Statlog (German Credit Data).
+Carrega dados do SCR/BCB 2025 (modalidade Financiamentos rurais), agrega
+buckets entre os 12 meses do ano e gera casos individuais sintéticos
+calibrados pelas estatísticas agregadas.
 
-Dataset original tem 1.000 linhas, 20 atributos + 1 label (1=bom risco, 2=mau risco).
-Convertemos para os campos esperados pelo modelo `Caso`.
+Cada bucket SCR é uma combinação (UF, segmento, cliente, cnae_ocupacao,
+porte, submodalidade, origem) com totais (numero_de_operacoes, carteira
+ativa em R$, carteira inadimplência em R$).
+
+Para cada bucket com ops >= 1 geramos até MAX_PER_BUCKET casos individuais.
+A taxa de inadimplência do bucket é replicada via Bernoulli; o valor
+solicitado é amostrado de lognormal cuja média se aproxima de
+carteira_ativa / numero_de_operacoes.
 """
 from __future__ import annotations
 
-import io
+import glob
 import sys
-import urllib.request
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-URL = "https://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german/german.data"
+MODALIDADE_RURAL = "Financiamentos rurais  (ex-financiamentos rurais e agroindustriais)"
+MAX_PER_BUCKET = 5         # gera no máximo 5 casos por bucket
+MIN_OPS = 1                # buckets com pelo menos 1 operação
+MAX_CASOS = 5_000          # corta a base após N para manter prazo viável
+SEED = 42
 
-COLUNAS_ORIGINAIS = [
-    "status_conta_corrente", "duracao_meses", "historico_credito", "finalidade_orig",
-    "valor_credito", "poupanca", "tempo_emprego_orig", "taxa_parcela_pct",
-    "estado_civil_genero", "outros_devedores", "tempo_residencia_anos", "propriedade",
-    "idade", "outros_planos", "habitacao", "creditos_existentes",
-    "trabalho", "dependentes", "telefone", "estrangeiro", "label",
-]
+DATA_DIR = Path(__file__).parent / "scrdata_2025"
+OUT_PATH = Path(__file__).parent / "casos_processados.csv"
 
-# Mapeamentos do código original para texto legível.
-MAP_FINALIDADE = {
-    "A40": "carro_novo", "A41": "carro_usado", "A42": "moveis",
-    "A43": "tv_eletronicos", "A44": "eletrodomestico", "A45": "reformas",
-    "A46": "educacao", "A47": "ferias", "A48": "treinamento",
-    "A49": "negocio", "A410": "outros",
+
+def carregar_e_filtrar() -> pd.DataFrame:
+    files = sorted(glob.glob(str(DATA_DIR / "scrdata_*.csv")))
+    if not files:
+        raise FileNotFoundError(f"Nenhum scrdata em {DATA_DIR}")
+    print(f"Lendo {len(files)} arquivos...", file=sys.stderr)
+    frames = []
+    for f in files:
+        df = pd.read_csv(f, sep=";", decimal=",", encoding="utf-8-sig")
+        df = df[df["modalidade"] == MODALIDADE_RURAL]
+        frames.append(df)
+    full = pd.concat(frames, ignore_index=True)
+    full["numero_de_operacoes"] = pd.to_numeric(full["numero_de_operacoes"], errors="coerce").fillna(0).astype(int)
+    full["carteira_ativa"] = pd.to_numeric(full["carteira_ativa"], errors="coerce").fillna(0)
+    full["carteira_inadimplencia"] = pd.to_numeric(full["carteira_inadimplencia"], errors="coerce").fillna(0)
+    print(f"Linhas rurais: {len(full):,}", file=sys.stderr)
+    return full
+
+
+def agregar_buckets(df: pd.DataFrame) -> pd.DataFrame:
+    chaves = ["uf", "segmento", "cliente", "cnae_ocupacao", "porte", "submodalidade", "origem"]
+    agg = (df.groupby(chaves, as_index=False)
+             .agg(numero_de_operacoes=("numero_de_operacoes", "sum"),
+                  carteira_ativa=("carteira_ativa", "sum"),
+                  carteira_inadimplencia=("carteira_inadimplencia", "sum")))
+    agg = agg[(agg["numero_de_operacoes"] >= MIN_OPS) & (agg["carteira_ativa"] > 0)]
+    print(f"Buckets agregados: {len(agg):,}", file=sys.stderr)
+    return agg
+
+
+# Faixa de salários mínimos → range de renda anual estimada (R$).
+# Considera salário mínimo nominal 2025 ~ R$ 1.518.
+FAIXAS_PORTE_PF = {
+    "Sem rendimento": (0, 18_000),
+    "Até 1 salário mínimo": (10_000, 22_000),
+    "Mais de 1 a 2 salários mínimos": (18_000, 36_500),
+    "Mais de 2 a 3 salários mínimos": (36_000, 54_500),
+    "Mais de 3 a 5 salários mínimos": (54_000, 91_000),
+    "Mais de 5 a 10 salários mínimos": (90_000, 182_000),
+    "Mais de 10 a 20 salários mínimos": (180_000, 364_000),
+    "Acima de 20 salários mínimos": (360_000, 1_500_000),
+    "Indisponível": (40_000, 200_000),
 }
-MAP_ESTADO_CIVIL = {
-    "A91": "divorciado", "A92": "casada", "A93": "solteiro",
-    "A94": "casado", "A95": "solteira",
-}
-MAP_TEMPO_EMPREGO_MESES = {
-    "A71": 0, "A72": 6, "A73": 30, "A74": 72, "A75": 120,
-}
-MAP_GARANTIA = {
-    "A101": "sem_garantia", "A102": "co-aplicante", "A103": "fiador",
+FAIXAS_PORTE_PJ = {
+    "Micro":   (60_000, 360_000),
+    "Pequeno": (360_000, 4_800_000),
+    "Médio":   (4_800_000, 300_000_000),
+    "Grande":  (300_000_000, 1_000_000_000),
+    "Indisponível": (300_000, 5_000_000),
+    "Sem rendimento": (60_000, 200_000),
 }
 
 
-def baixar() -> pd.DataFrame:
-    print(f"Baixando {URL}...", file=sys.stderr)
-    with urllib.request.urlopen(URL) as resp:
-        raw = resp.read().decode("utf-8")
-    df = pd.read_csv(io.StringIO(raw), sep=" ", header=None, names=COLUNAS_ORIGINAIS)
-    return df
+def _amostra_renda(rng, porte: str, tipo_cliente: str) -> float:
+    faixas = FAIXAS_PORTE_PF if tipo_cliente == "PF" else FAIXAS_PORTE_PJ
+    lo, hi = faixas.get(porte, (60_000, 300_000))
+    return float(rng.uniform(lo, hi))
 
 
-def converter(df: pd.DataFrame) -> pd.DataFrame:
-    out = pd.DataFrame()
-    out["idade"] = df["idade"].astype(int)
-    # renda anual estimada a partir do valor de crédito e da taxa de parcela.
-    out["renda_anual"] = (df["valor_credito"] * 12 / df["taxa_parcela_pct"] * 100).round(2)
-    out["estado_civil"] = df["estado_civil_genero"].map(MAP_ESTADO_CIVIL).fillna("solteiro")
-    out["dependentes"] = df["dependentes"].astype(int)
-    out["tempo_emprego_meses"] = df["tempo_emprego_orig"].map(MAP_TEMPO_EMPREGO_MESES).astype(int)
-    out["valor_solicitado"] = df["valor_credito"].astype(float)
-    # prazo do dataset vem em meses, mas pode ultrapassar 60. Saturamos em 60.
-    out["prazo_meses"] = df["duracao_meses"].clip(6, 60).astype(int)
-    out["finalidade"] = df["finalidade_orig"].map(MAP_FINALIDADE).fillna("outros")
-    # score interno aproximado: histórico_credito tem ranking A30..A34.
-    rank = {"A30": 850, "A31": 750, "A32": 650, "A33": 550, "A34": 400}
-    out["score_interno"] = df["historico_credito"].map(rank).fillna(600).astype(int)
-    out["divida_aberto"] = df["valor_credito"] * 0.25  # heurística
-    out["tipo_garantia"] = df["outros_devedores"].map(MAP_GARANTIA).fillna("sem_garantia")
-    # Label original: 1=bom risco (não inadimpliu), 2=mau risco (inadimpliu)
-    out["inadimpliu"] = (df["label"] == 2)
-    return out
+def _amostra_lognormal(rng, media_alvo: float, sigma: float = 0.6) -> float:
+    if media_alvo <= 0:
+        return 1_000.0
+    mu = np.log(media_alvo) - sigma**2 / 2
+    return float(np.exp(rng.normal(mu, sigma)))
+
+
+SUBM_PRAZOS = {
+    "Custeio": (6, 24),
+    "Investimento": (24, 60),
+    "Comercialização": (6, 18),
+    "Industrialização": (12, 36),
+}
+SUBM_FINALIDADES = {
+    "Custeio": "custeio_agricola",
+    "Investimento": "investimento_rural",
+    "Comercialização": "comercializacao_safra",
+    "Industrialização": "industrializacao_agro",
+}
+SUBM_GARANTIAS = {
+    "Custeio": "penhor_agricola",
+    "Investimento": "alienacao_fiduciaria",
+    "Comercialização": "warrant_agropecuario",
+    "Industrialização": "hipoteca_industrial",
+}
+
+
+def _normaliza_submodalidade(s: str) -> str:
+    return {"Comercialização": "Comercializacao", "Industrialização": "Industrializacao"}.get(s, s)
+
+
+def _atividade_principal(cnae: str, rng) -> str:
+    cnae_lower = cnae.lower()
+    if "agricultura" in cnae_lower or "pecu" in cnae_lower:
+        return rng.choice(["agricultura", "pecuaria", "mista"], p=[0.4, 0.3, 0.3])
+    return rng.choice(["agricultura", "pecuaria", "mista"], p=[0.5, 0.25, 0.25])
+
+
+def gerar_casos_de_bucket(bucket: pd.Series, rng) -> list[dict]:
+    n = min(int(bucket["numero_de_operacoes"]), MAX_PER_BUCKET)
+    if n <= 0:
+        return []
+    media_valor = bucket["carteira_ativa"] / max(int(bucket["numero_de_operacoes"]), 1)
+    p_inad = float(np.clip(bucket["carteira_inadimplencia"] / bucket["carteira_ativa"], 0.0, 1.0))
+    submodalidade_norm = _normaliza_submodalidade(bucket["submodalidade"])
+    prazo_lo, prazo_hi = SUBM_PRAZOS.get(bucket["submodalidade"], (6, 36))
+
+    casos = []
+    for _ in range(n):
+        tipo_cliente = bucket["cliente"]
+        renda = _amostra_renda(rng, bucket["porte"], tipo_cliente)
+        valor = _amostra_lognormal(rng, media_valor, sigma=0.65)
+        inadimpliu = bool(rng.random() < p_inad)
+
+        idade = int(np.clip(rng.normal(48 if tipo_cliente == "PF" else 50, 12), 18, 90))
+        dependentes = int(min(rng.poisson(1.5), 6))
+        tempo_emprego = int(np.clip((idade - 20) * 12 + rng.normal(0, 36), 0, 600))
+        prazo = int(rng.integers(prazo_lo, prazo_hi + 1))
+        # Score: inadimplentes têm score em média mais baixo
+        score_base = 700 if not inadimpliu else 520
+        score = int(np.clip(rng.normal(score_base, 80), 200, 1000))
+        # Dívida em aberto: fração da renda
+        razao = rng.beta(2, 6) if not inadimpliu else rng.beta(4, 4)
+        divida = float(min(razao * renda, renda * 0.9))
+
+        casos.append({
+            "uf": bucket["uf"],
+            "tipo_cliente": tipo_cliente,
+            "cnae_ocupacao": bucket["cnae_ocupacao"],
+            "submodalidade": submodalidade_norm,
+            "idade": idade,
+            "renda_anual": round(renda, 2),
+            "estado_civil": str(rng.choice(["solteiro", "casado", "divorciado"], p=[0.35, 0.55, 0.10])),
+            "dependentes": dependentes,
+            "tempo_emprego_meses": tempo_emprego,
+            "valor_solicitado": round(min(valor, renda * 5), 2),
+            "prazo_meses": prazo,
+            "finalidade": SUBM_FINALIDADES.get(bucket["submodalidade"], "outros"),
+            "score_interno": score,
+            "divida_aberto": round(divida, 2),
+            "tipo_garantia": SUBM_GARANTIAS.get(bucket["submodalidade"], "sem_garantia"),
+            "area_propriedade_ha": round(float(rng.lognormal(mean=3.5, sigma=0.7) * (renda / 100_000) ** 0.5), 1),
+            "var_produtividade_pct": round(float(rng.normal(-2 + (-8 if inadimpliu else 0), 8)), 1),
+            "renegociacoes_recentes": int(rng.poisson(1.4 if inadimpliu else 0.4)),
+            "atividade_principal": _atividade_principal(bucket["cnae_ocupacao"], rng),
+            "inadimpliu": inadimpliu,
+        })
+    return casos
 
 
 def main():
-    out_path = Path(__file__).parent / "german_credit.csv"
-    df = baixar()
-    df = converter(df)
-    df.to_csv(out_path, index=False)
-    print(f"Salvo em {out_path} ({len(df)} linhas).", file=sys.stderr)
+    rng = np.random.default_rng(SEED)
+    df = carregar_e_filtrar()
+    buckets = agregar_buckets(df)
+
+    todos_casos: list[dict] = []
+    for _, b in buckets.iterrows():
+        todos_casos.extend(gerar_casos_de_bucket(b, rng))
+        if len(todos_casos) >= MAX_CASOS:
+            break
+
+    out = pd.DataFrame(todos_casos[:MAX_CASOS])
+    out.to_csv(OUT_PATH, index=False, encoding="utf-8")
+    print(f"Salvos {len(out):,} casos em {OUT_PATH}", file=sys.stderr)
+    print(f"Taxa de inadimplência empírica nos casos sintéticos: "
+          f"{out['inadimpliu'].mean()*100:.2f}%", file=sys.stderr)
 
 
 if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 3: Rodar download**
+- [x] **Step 2: Rodar e verificar**
 
-Run: `uv run python data/download_german_credit.py`
-Expected: arquivo `data/german_credit.csv` criado com 1.000 linhas.
+Run: `uv run python data/load_scrbcb.py`
+Expected: `Salvos 5,000 casos em ...casos_processados.csv` (ou menos se a base de buckets for menor). A taxa de inadimplência empírica deve estar próxima da real do BCB (~2–8% dependendo do filtro).
 
-Caso a URL do UCI esteja fora do ar: alternativa em [https://www.kaggle.com/datasets/uciml/german-credit](https://www.kaggle.com/datasets/uciml/german-credit) — baixar manualmente e salvar como `data/german_credit_raw.csv`, depois ajustar o script para ler de arquivo local.
-
-- [ ] **Step 4: Verificar**
-
-Run: `uv run python -c "import pandas as pd; print(pd.read_csv('data/german_credit.csv').head())"`
-Expected: 5 linhas com as colunas convertidas.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add data/download_german_credit.py .gitignore
-git commit -m "feat: script de download e conversão do German Credit Data"
+git add data/load_scrbcb.py
+git commit -m "feat: loader SCR/BCB com geração de casos sintéticos calibrados"
 ```
 
 ---
 
-## Task 1.6: Geração de campos sintéticos rurais
+## Task 1.6: (vazia, integrada na 1.5)
 
-**Files:**
-- Create: `data/seed_synthetic.py`
-- Create: `tests/test_seed_synthetic.py`
-
-- [ ] **Step 1: Escrever testes**
-
-`tests/test_seed_synthetic.py`:
-```python
-import numpy as np
-import pandas as pd
-from data.seed_synthetic import gerar_campos_sinteticos
-
-
-def test_gera_campos_correctos():
-    df = pd.DataFrame({
-        "idade": [30, 50],
-        "renda_anual": [50_000, 200_000],
-        "valor_solicitado": [10_000, 100_000],
-        "finalidade": ["custeio_agricola", "outros"],
-        "inadimpliu": [False, True],
-    })
-    out = gerar_campos_sinteticos(df, seed=42)
-
-    assert "area_propriedade_ha" in out.columns
-    assert "var_produtividade_pct" in out.columns
-    assert "renegociacoes_recentes" in out.columns
-    assert "atividade_principal" in out.columns
-
-    # área deve ser positiva
-    assert (out["area_propriedade_ha"] > 0).all()
-    # renegociações são inteiros não-negativos
-    assert (out["renegociacoes_recentes"] >= 0).all()
-    assert out["renegociacoes_recentes"].dtype.kind in ("i", "u")
-    # atividade tem valores válidos
-    assert set(out["atividade_principal"]).issubset({"agricultura", "pecuaria", "mista"})
-
-
-def test_seed_reproduzivel():
-    df = pd.DataFrame({
-        "idade": [30] * 50,
-        "renda_anual": [80_000] * 50,
-        "valor_solicitado": [20_000] * 50,
-        "finalidade": ["custeio_agricola"] * 50,
-        "inadimpliu": [False] * 50,
-    })
-    out1 = gerar_campos_sinteticos(df, seed=123)
-    out2 = gerar_campos_sinteticos(df, seed=123)
-    pd.testing.assert_frame_equal(out1, out2)
-
-
-def test_inadimplentes_tem_var_pior_em_media():
-    n = 500
-    df = pd.DataFrame({
-        "idade": [40] * n,
-        "renda_anual": [100_000] * n,
-        "valor_solicitado": [20_000] * n,
-        "finalidade": ["custeio_agricola"] * n,
-        "inadimpliu": [True] * (n // 2) + [False] * (n // 2),
-    })
-    out = gerar_campos_sinteticos(df, seed=7)
-    media_inad = out.loc[out["inadimpliu"], "var_produtividade_pct"].mean()
-    media_ok = out.loc[~out["inadimpliu"], "var_produtividade_pct"].mean()
-    # inadimplentes têm em média variação pior (mais negativa)
-    assert media_inad < media_ok
-```
-
-- [ ] **Step 2: Rodar e ver falhar**
-
-Run: `uv run pytest tests/test_seed_synthetic.py -v`
-Expected: ImportError.
-
-- [ ] **Step 3: Implementar**
-
-`data/seed_synthetic.py`:
-```python
-"""
-Gera campos rurais sintéticos para enriquecer o dataset German Credit.
-Usa regras + ruído gaussiano. Casos `inadimpliu=True` recebem distribuição
-levemente pior em produtividade e renegociações — para alinhar narrativa
-com desfecho.
-"""
-from __future__ import annotations
-
-import numpy as np
-import pandas as pd
-
-
-def gerar_campos_sinteticos(df: pd.DataFrame, seed: int = 42) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    n = len(df)
-    out = df.copy()
-
-    # area_propriedade_ha: lognormal escalada por renda_anual
-    base_area = np.exp(rng.normal(loc=3.5, scale=0.6, size=n))
-    fator_renda = (df["renda_anual"] / 100_000).clip(0.3, 5.0).to_numpy()
-    out["area_propriedade_ha"] = (base_area * fator_renda).round(1)
-
-    # var_produtividade_pct
-    media_base = -2.0
-    inad = df["inadimpliu"].astype(bool).to_numpy()
-    desloc = np.where(inad, -8.0, 0.0)  # inadimplentes pioram em média -10%
-    out["var_produtividade_pct"] = (
-        rng.normal(loc=media_base + desloc, scale=8.0)
-    ).round(1)
-
-    # renegociacoes_recentes: Poisson, com lambda maior para inadimplentes
-    lam = np.where(inad, 1.4, 0.4)
-    out["renegociacoes_recentes"] = rng.poisson(lam=lam).astype(int)
-
-    # atividade_principal: depende da finalidade
-    is_agro = df["finalidade"].astype(str).str.contains("agricola|negocio", na=False)
-    probs_agro = [0.55, 0.20, 0.25]   # agric, pec, mista
-    probs_outro = [0.35, 0.35, 0.30]
-    atividades = ["agricultura", "pecuaria", "mista"]
-    sample = rng.uniform(size=n)
-
-    def _pick(p, probs):
-        c = np.cumsum(probs)
-        if p < c[0]: return atividades[0]
-        if p < c[1]: return atividades[1]
-        return atividades[2]
-
-    out["atividade_principal"] = [
-        _pick(s, probs_agro if a else probs_outro)
-        for s, a in zip(sample, is_agro)
-    ]
-
-    return out
-```
-
-- [ ] **Step 4: Rodar testes**
-
-Run: `uv run pytest tests/test_seed_synthetic.py -v`
-Expected: 3 tests PASSED.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add data/seed_synthetic.py tests/test_seed_synthetic.py
-git commit -m "feat: gerador de campos rurais sintéticos com base em inadimpliu"
-```
+> Os campos sintéticos rurais (area_propriedade_ha, var_produtividade_pct, renegociacoes_recentes, atividade_principal) agora são gerados dentro do `load_scrbcb.py` da Task 1.5, diretamente em `gerar_casos_de_bucket`. Se no futuro precisarmos gerar para casos vindos do feedback do analista, criamos `data/seed_synthetic.py` na Task 4.2. O teste `tests/test_seed_synthetic.py` mencionado aqui é skippable se `data/seed_synthetic.py` não existir.
 
 ---
 
 ## Task 1.7: Mapear decisao_final do dataset
 
 **Files:**
-- Modify: `data/seed_synthetic.py` (adicionar função `mapear_decisao_final`)
-- Modify: `tests/test_seed_synthetic.py` (adicionar testes)
+- Modify: `data/load_scrbcb.py` (adicionar função `mapear_decisao_final` ao final do arquivo)
+- Create: `tests/test_seed_synthetic.py` (importar de `data.load_scrbcb`)
+
+A lógica de mapeamento permanece idêntica à especificada originalmente. Mover a função `mapear_decisao_final` para `data/load_scrbcb.py` (ao invés de `data/seed_synthetic.py`) e ajustar o teste para importar de lá. O teste em si fica igual.
 
 - [ ] **Step 1: Adicionar testes**
 
-Adicionar ao final de `tests/test_seed_synthetic.py`:
+Criar `tests/test_seed_synthetic.py`:
 ```python
-from data.seed_synthetic import mapear_decisao_final
+import pandas as pd
+from data.load_scrbcb import mapear_decisao_final
 
 
 def test_decisao_final_segue_score_e_inadimpliu():
@@ -989,14 +956,9 @@ def test_decisao_final_segue_score_e_inadimpliu():
     assert out.iloc[3] == "recusado"
 ```
 
-- [ ] **Step 2: Rodar e ver falhar**
+- [ ] **Step 2: Implementar**
 
-Run: `uv run pytest tests/test_seed_synthetic.py::test_decisao_final_segue_score_e_inadimpliu -v`
-Expected: ImportError.
-
-- [ ] **Step 3: Implementar**
-
-Adicionar ao final de `data/seed_synthetic.py`:
+Adicionar ao final de `data/load_scrbcb.py`:
 ```python
 def mapear_decisao_final(df: pd.DataFrame) -> pd.Series:
     """
@@ -1018,16 +980,16 @@ def mapear_decisao_final(df: pd.DataFrame) -> pd.Series:
     return decisao
 ```
 
-- [ ] **Step 4: Rodar teste**
+- [ ] **Step 3: Rodar teste**
 
 Run: `uv run pytest tests/test_seed_synthetic.py -v`
-Expected: 4 tests PASSED.
+Expected: 1 test PASSED.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add data/seed_synthetic.py tests/test_seed_synthetic.py
-git commit -m "feat: mapear decisao_final do German Credit a partir de score e dívida"
+git add data/load_scrbcb.py tests/test_seed_synthetic.py
+git commit -m "feat: mapear decisao_final a partir de score e dívida (em load_scrbcb)"
 ```
 
 ---
@@ -1038,6 +1000,8 @@ git commit -m "feat: mapear decisao_final do German Credit a partir de score e d
 - Create: `backend/seed/load_data.py`
 - Create: `tests/test_seed_load.py`
 - Create: `scripts/seed.sh`
+
+O CSV de entrada agora é `data/casos_processados.csv` (gerado pelo `load_scrbcb.py` da Task 1.5). Os campos uf, tipo_cliente, cnae_ocupacao, submodalidade já estão presentes no CSV e devem ser passados ao construtor do `Caso`. Não há mais chamada a `gerar_campos_sinteticos` (já feito no loader).
 
 - [ ] **Step 1: Escrever teste**
 
@@ -1058,19 +1022,27 @@ from backend.seed.load_data import carregar_csv_em_sqlite
 def csv_minimo(tmp_path: Path) -> Path:
     df = pd.DataFrame([
         {
+            "uf": "PR", "tipo_cliente": "PF", "cnae_ocupacao": "Empresário",
+            "submodalidade": "Custeio",
             "idade": 35, "renda_anual": 80_000, "estado_civil": "casado",
             "dependentes": 1, "tempo_emprego_meses": 36,
             "valor_solicitado": 20_000, "prazo_meses": 24,
             "finalidade": "custeio_agricola", "score_interno": 700,
             "divida_aberto": 5_000, "tipo_garantia": "fiador",
+            "area_propriedade_ha": 50.0, "var_produtividade_pct": -2.0,
+            "renegociacoes_recentes": 0, "atividade_principal": "agricultura",
             "inadimpliu": False,
         },
         {
+            "uf": "SP", "tipo_cliente": "PJ", "cnae_ocupacao": "Agricultura, pecuária",
+            "submodalidade": "Investimento",
             "idade": 60, "renda_anual": 30_000, "estado_civil": "solteiro",
             "dependentes": 0, "tempo_emprego_meses": 12,
             "valor_solicitado": 15_000, "prazo_meses": 36,
             "finalidade": "custeio_agricola", "score_interno": 500,
             "divida_aberto": 12_000, "tipo_garantia": "sem_garantia",
+            "area_propriedade_ha": 20.0, "var_produtividade_pct": -12.0,
+            "renegociacoes_recentes": 2, "atividade_principal": "mista",
             "inadimpliu": True,
         },
     ])
@@ -1084,13 +1056,16 @@ def test_carrega_csv_em_sqlite(csv_minimo, tmp_path):
     engine = create_engine(db_url)
     Base.metadata.create_all(engine)
 
-    n = carregar_csv_em_sqlite(str(csv_minimo), engine, seed=42)
+    n = carregar_csv_em_sqlite(str(csv_minimo), engine)
     assert n == 2
 
     with Session(engine) as s:
         casos = s.scalars(select(Caso)).all()
         assert len(casos) == 2
-        # campos sintéticos foram gerados
+        # novos campos presentes
+        assert casos[0].uf == "PR"
+        assert casos[0].tipo_cliente == "PF"
+        # campos rurais preservados
         assert all(c.area_propriedade_ha > 0 for c in casos)
         assert all(c.atividade_principal in {"agricultura", "pecuaria", "mista"} for c in casos)
         # decisao_final mapeada
@@ -1107,8 +1082,8 @@ Expected: ImportError.
 `backend/seed/load_data.py`:
 ```python
 """
-Carrega o CSV do German Credit (já convertido) em SQLite.
-Aplica geração de campos sintéticos rurais e mapeamento de decisao_final.
+Carrega o CSV de casos sintéticos SCR/BCB (casos_processados.csv) em SQLite.
+Aplica mapeamento de decisao_final. Os campos sintéticos rurais já vêm no CSV.
 """
 from __future__ import annotations
 
@@ -1117,12 +1092,11 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from backend.models import Caso
-from data.seed_synthetic import gerar_campos_sinteticos, mapear_decisao_final
+from data.load_scrbcb import mapear_decisao_final
 
 
-def carregar_csv_em_sqlite(csv_path: str, engine: Engine, seed: int = 42) -> int:
+def carregar_csv_em_sqlite(csv_path: str, engine: Engine) -> int:
     df = pd.read_csv(csv_path)
-    df = gerar_campos_sinteticos(df, seed=seed)
     df["decisao_final"] = mapear_decisao_final(df)
 
     with Session(engine) as s:
@@ -1132,6 +1106,10 @@ def carregar_csv_em_sqlite(csv_path: str, engine: Engine, seed: int = 42) -> int
 
         for _, row in df.iterrows():
             s.add(Caso(
+                uf=str(row["uf"]),
+                tipo_cliente=str(row["tipo_cliente"]),
+                cnae_ocupacao=str(row["cnae_ocupacao"]),
+                submodalidade=str(row["submodalidade"]),
                 idade=int(row["idade"]),
                 renda_anual=float(row["renda_anual"]),
                 estado_civil=str(row["estado_civil"]),
@@ -1166,14 +1144,16 @@ Expected: PASS.
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cria tabelas e popula com German Credit + campos sintéticos
+# Gera casos sintéticos e popula SQLite
+uv run python data/load_scrbcb.py
+
 uv run python -c "
 from backend.db import Base, get_engine
 from backend.seed.load_data import carregar_csv_em_sqlite
 
 engine = get_engine()
 Base.metadata.create_all(engine)
-n = carregar_csv_em_sqlite('data/german_credit.csv', engine)
+n = carregar_csv_em_sqlite('data/casos_processados.csv', engine)
 print(f'Carregados {n} casos.')
 "
 ```
@@ -1183,16 +1163,15 @@ print(f'Carregados {n} casos.')
 Run:
 ```bash
 chmod +x scripts/seed.sh
-uv run python data/download_german_credit.py
 ./scripts/seed.sh
 ```
-Expected: `Carregados 1000 casos.`
+Expected: `Carregados 5000 casos.`
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add backend/seed/ tests/test_seed_load.py scripts/seed.sh
-git commit -m "feat: script de seed que carrega German Credit + campos rurais no SQLite"
+git commit -m "feat: script de seed que carrega casos_processados.csv (SCR/BCB) no SQLite"
 ```
 
 ---

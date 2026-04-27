@@ -9,6 +9,10 @@ class Caso(Base):
     __tablename__ = "caso"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    uf: Mapped[str] = mapped_column(String(2))
+    tipo_cliente: Mapped[str] = mapped_column(String(2))
+    cnae_ocupacao: Mapped[str] = mapped_column(String(128))
+    submodalidade: Mapped[str] = mapped_column(String(32))
     idade: Mapped[int]
     renda_anual: Mapped[float] = mapped_column(Float)
     estado_civil: Mapped[str] = mapped_column(String(32))

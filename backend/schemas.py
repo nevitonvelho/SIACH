@@ -17,6 +17,10 @@ class AtividadePrincipal(str, Enum):
 
 
 class SolicitacaoCredito(BaseModel):
+    uf: str = Field(min_length=2, max_length=2)
+    tipo_cliente: Literal["PF", "PJ"]
+    cnae_ocupacao: str
+    submodalidade: Literal["Custeio", "Investimento", "Comercializacao", "Industrializacao"]
     idade: int = Field(ge=18, le=100)
     renda_anual: float = Field(gt=0)
     estado_civil: str

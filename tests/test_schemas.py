@@ -5,6 +5,8 @@ from backend.schemas import SolicitacaoCredito, ParecerTecnico, FeedbackPayload,
 
 def _payload_valido():
     return {
+        "uf": "PR", "tipo_cliente": "PF", "cnae_ocupacao": "Empresário",
+        "submodalidade": "Custeio",
         "idade": 45, "renda_anual": 180_000, "estado_civil": "casado",
         "dependentes": 2, "tempo_emprego_meses": 120,
         "valor_solicitado": 120_000, "prazo_meses": 12,

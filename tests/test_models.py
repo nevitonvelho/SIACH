@@ -15,6 +15,7 @@ def test_caso_persiste_e_recupera():
     engine = setup_db()
     with Session(engine) as s:
         c = Caso(
+            uf="PR", tipo_cliente="PF", cnae_ocupacao="Empresário", submodalidade="Custeio",
             idade=45, renda_anual=180_000.0, estado_civil="casado",
             dependentes=2, tempo_emprego_meses=120,
             valor_solicitado=120_000.0, prazo_meses=12,
@@ -29,6 +30,7 @@ def test_caso_persiste_e_recupera():
         assert c.id is not None
 
         loaded = s.get(Caso, c.id)
+        assert loaded.uf == "PR"
         assert loaded.idade == 45
         assert loaded.atividade_principal == "mista"
         assert loaded.inadimpliu is True

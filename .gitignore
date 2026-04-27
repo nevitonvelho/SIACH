@@ -41,5 +41,5 @@ Thumbs.db
 htmlcov/
 .coverage
 
-# Dataset bruto (download)
-data/german_credit.csv
+# Dataset bruto SCR/BCB (não commitamos os 1.2 GB)
+data/scrdata_2025/
