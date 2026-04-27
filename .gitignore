@@ -43,3 +43,11 @@ htmlcov/
 
 # Dataset bruto SCR/BCB (não commitamos os 1.2 GB)
 data/scrdata_2025/
+data/scrdata_2025.zip
+
+# Claude Code
+.claude/
+
+# Artefatos do brainstorming (não-código)
+Superpowers Brainstorming.pdf
+artigo_tcc.txt

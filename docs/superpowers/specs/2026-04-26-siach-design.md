@@ -91,23 +91,27 @@ aprova um parecer através do endpoint `/feedback`, o caso é inserido na tabela
 | Campo | Tipo | Origem | Notas |
 |---|---|---|---|
 | `id` | INTEGER PK | seed/feedback | |
-| `idade` | INTEGER | German Credit | |
-| `renda_anual` | REAL | German Credit | em R$ |
-| `estado_civil` | TEXT | German Credit | |
-| `dependentes` | INTEGER | German Credit | |
-| `tempo_emprego_meses` | INTEGER | German Credit | |
-| `valor_solicitado` | REAL | German Credit | |
-| `prazo_meses` | INTEGER | German Credit | |
-| `finalidade` | TEXT | German Credit | mapeada para `custeio_agricola` quando aplicável |
-| `score_interno` | INTEGER | German Credit | |
-| `divida_aberto` | REAL | German Credit | |
-| `tipo_garantia` | TEXT | German Credit | |
-| `area_propriedade_ha` | REAL | sintético | regras + ruído gaussiano |
-| `var_produtividade_pct` | REAL | sintético | variação ano-a-ano, pode ser negativa |
-| `renegociacoes_recentes` | INTEGER | sintético | distribuição de Poisson |
-| `atividade_principal` | TEXT | sintético | `agricultura`, `pecuaria`, `mista` |
-| `decisao_final` | TEXT | German Credit + mapeamento | `aprovado`, `aprovado_com_ressalvas`, `recusado` |
-| `inadimpliu` | BOOLEAN | German Credit (label) | usado **apenas** na avaliação experimental, nunca no prompt |
+| `uf` | TEXT(2) | SCR/BCB | UF do solicitante (AC, AL, …, SP, TO) |
+| `tipo_cliente` | TEXT(2) | SCR/BCB | `PF` ou `PJ` |
+| `cnae_ocupacao` | TEXT | SCR/BCB | ocupação (PF) ou setor CNAE (PJ) |
+| `submodalidade` | TEXT | SCR/BCB | `Custeio`, `Investimento`, `Comercializacao`, `Industrializacao` |
+| `idade` | INTEGER | sintético | calibrado por faixas etárias do IBGE para ocupação rural |
+| `renda_anual` | REAL | sintético calibrado | derivado da faixa de `porte` do SCR (salários mínimos) |
+| `estado_civil` | TEXT | sintético | distribuição realista por idade |
+| `dependentes` | INTEGER | sintético | Poisson(1.5) |
+| `tempo_emprego_meses` | INTEGER | sintético | calibrado por idade |
+| `valor_solicitado` | REAL | calibrado | distribuição lognormal calibrada por `carteira_ativa / numero_de_operacoes` do bucket SCR |
+| `prazo_meses` | INTEGER | sintético | depende da submodalidade (Custeio: 6–24, Investimento: 24–60) |
+| `finalidade` | TEXT | derivado | mapeado de `submodalidade` (`custeio_agricola`, `investimento_rural`, etc.) |
+| `score_interno` | INTEGER | sintético | calibrado por porte e taxa de inadimplência do bucket |
+| `divida_aberto` | REAL | sintético | calibrado por `valor_solicitado` |
+| `tipo_garantia` | TEXT | sintético | depende de submodalidade |
+| `area_propriedade_ha` | REAL | sintético | lognormal escalada por renda |
+| `var_produtividade_pct` | REAL | sintético | distribuição shifted para inadimplentes |
+| `renegociacoes_recentes` | INTEGER | sintético | Poisson maior para inadimplentes |
+| `atividade_principal` | TEXT | derivado | mapeado de CNAE (`agricultura`, `pecuaria`, `mista`) |
+| `decisao_final` | TEXT | derivado | mapeado de score + razão dívida/renda + inadimpliu |
+| `inadimpliu` | BOOLEAN | calibrado | Bernoulli(`carteira_inadimplencia / carteira_ativa` do bucket SCR), usado **apenas** na avaliação experimental, nunca no prompt |
 
 **`decisao`** (gerada pelo SIACH em runtime)
 
@@ -145,11 +149,12 @@ produtividade"). Determinismo é importante para reprodutibilidade do experiment
 
 Exemplo de saída do template para um caso:
 
-> "Produtor rural de 45 anos, atividade mista (soja + bovino), área de 80ha,
+> "Produtor rural de 45 anos, casado, residente no Paraná (PR), Pessoa Física
+> com ocupação 'Empresário'. Atividade mista (soja + bovino), área de 80ha,
 > renda anual R$180.000. Apresenta queda de produtividade de 15% e 22% nas
 > duas últimas safras. Possui 2 renegociações recentes e dívida em aberto de
-> R$45.000. Solicita R$120.000 em custeio agrícola, prazo 12 meses, com
-> garantia de penhor agrícola. Score interno 580."
+> R$45.000. Solicita R$120.000 em custeio agrícola (submodalidade Custeio),
+> prazo 12 meses, com garantia de penhor agrícola. Score interno 580."
 
 ## 5. Pipeline detalhado
 
@@ -318,11 +323,37 @@ tcc/
 
 ## 8. Validação experimental
 
-### 8.1 Divisão dos dados
+### 8.1 Dataset
 
-- 700 casos (70%) → indexados no Chroma como base histórica.
-- 200 casos (20%) → conjunto de teste, rodam pelo SIACH como solicitações novas.
-- 100 casos (10%) → conjunto de validação automática.
+**Fonte primária:** SCR (Sistema de Informações de Crédito) do Banco Central do
+Brasil, dados públicos de 2025 (12 meses), filtrados pela modalidade
+"Financiamentos rurais (ex-financiamentos rurais e agroindustriais)". O SCR é
+agregado por bucket (UF × segmento × tipo de cliente × CNAE × porte ×
+submodalidade × origem × indexador), não traz casos individuais.
+
+**Geração de casos individuais sintéticos calibrados:** para cada bucket com
+`numero_de_operacoes ≥ 1` filtramos uma quantidade limitada (até 5 casos por
+bucket) e geramos casos sintéticos onde:
+
+- Os campos categóricos (UF, tipo_cliente, cnae_ocupacao, submodalidade) vêm
+  do bucket.
+- `valor_solicitado` ~ lognormal calibrada para que a média do bucket se
+  aproxime de `carteira_ativa / numero_de_operacoes`.
+- `inadimpliu` ~ Bernoulli(`carteira_inadimplencia / carteira_ativa` do bucket).
+- Demais campos (idade, dependentes, tempo_emprego_meses, score_interno, etc.)
+  são gerados por regras condicionadas em `tipo_cliente`, `porte` e
+  `inadimpliu`.
+
+**Justificativa acadêmica:** os casos individuais são sintéticos, mas as
+distribuições agregadas (taxas de inadimplência por UF, segmento, CNAE, porte,
+submodalidade) refletem dados oficiais do BCB. Isso evita os problemas de LGPD
+de dados reais individuais brasileiros e mantém realismo estatístico em escala.
+
+**Divisão:**
+
+- ~70% dos casos → indexados no Chroma como base histórica.
+- ~20% → conjunto de teste, rodam pelo SIACH como solicitações novas.
+- ~10% → conjunto de validação automática.
 
 Durante a análise de um caso de teste, o próprio caso é excluído da query
 ao Chroma (anti-leak).
@@ -335,7 +366,8 @@ Comparação entre quatro modelos no mesmo conjunto de 200 casos:
 |---|---|
 | Regra fixa | `score_interno > 600 AND divida_aberto / renda_anual < 0.30` |
 | k-NN tabular | k=5 sobre features numéricas, voting majoritário |
-| Regressão logística | sklearn, todas as features tabulares |
+| Regressão logística | sklearn, todas as features tabulares + categóricas one-hot |
+| Taxa de bucket SCR | classifica como inadimplente sse `taxa_inad_bucket > limiar` |
 | **SIACH completo** | RAG + LangChain + Sonnet |
 
 Métricas: acurácia, precision/recall/F1 macro e por classe, AUC-ROC, matriz
