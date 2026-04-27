@@ -1,0 +1,41 @@
+:root {
+  --brand: #2c5f2d;
+  --brand-soft: #97bc62;
+  --warn: #d97706;
+  --danger: #b91c1c;
+}
+
+body {
+  background: #f7f8f5;
+  color: #1f2937;
+}
+
+.navbar-brand {
+  font-weight: 700;
+  color: var(--brand) !important;
+}
+
+.card-siach {
+  border-left: 4px solid var(--brand);
+  border-radius: 8px;
+}
+
+.recomendacao-aprovado { color: #166534; font-weight: 700; }
+.recomendacao-aprovado_com_ressalvas { color: var(--warn); font-weight: 700; }
+.recomendacao-recusado { color: var(--danger); font-weight: 700; }
+
+.parecer-humanizado {
+  background: #ecfdf5;
+  border-left: 4px solid var(--brand-soft);
+  padding: 1rem;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
+.caso-similar {
+  background: #f9fafb;
+  border-left: 3px solid #9ca3af;
+  padding: .6rem .8rem;
+  margin-bottom: .5rem;
+  font-size: .9rem;
+}
