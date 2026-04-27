@@ -197,5 +197,25 @@ def main():
           f"{out['inadimpliu'].mean()*100:.2f}%", file=sys.stderr)
 
 
+def mapear_decisao_final(df: pd.DataFrame) -> pd.Series:
+    """
+    Mapeia para `aprovado` / `aprovado_com_ressalvas` / `recusado`
+    com base em score_interno, razão dívida/renda e inadimpliu.
+
+    Esta é a decisão original que o analista (humano) tomou no caso
+    histórico, NÃO a recomendação do SIACH.
+    """
+    razao = df["divida_aberto"] / df["renda_anual"]
+    score = df["score_interno"]
+    inad = df["inadimpliu"].astype(bool)
+
+    decisao = pd.Series(["aprovado_com_ressalvas"] * len(df), index=df.index)
+    decisao[(score >= 700) & (razao < 0.20)] = "aprovado"
+    decisao[(score < 550) | (razao > 0.40)] = "recusado"
+    # Quem inadimpliu e estava no meio termo, retroativamente foi recusado
+    decisao[(decisao == "aprovado_com_ressalvas") & inad] = "recusado"
+    return decisao
+
+
 if __name__ == "__main__":
     main()
