@@ -23,6 +23,8 @@ async function carregar() {
     document.getElementById('conteudo').innerHTML =
       '<p class="text-muted">Nenhuma análise disponível ainda. Volte mais tarde.</p>';
     document.getElementById('progresso').textContent = 'Avaliação';
+    document.getElementById('btn-anterior').disabled = true;
+    document.getElementById('btn-proxima').disabled = true;
     return;
   }
   const primeiraSemNota = analises.findIndex(x => !(String(x.decisao_id) in notas));
@@ -31,8 +33,9 @@ async function carregar() {
 }
 
 function render() {
+  document.getElementById('msg').innerHTML = '';
   const item = analises[idx];
-  const pt = item.parecer_tecnico;
+  const pt = item.parecer_tecnico || {};
   const ds = item.dados_solicitante || {};
   document.getElementById('progresso').textContent = `Análise ${idx + 1} de ${analises.length}`;
   const avaliadas = analises.filter(x => String(x.decisao_id) in notas).length;
@@ -83,6 +86,7 @@ function render() {
 
 async function salvarNota(decisaoId, nota) {
   const msg = document.getElementById('msg');
+  document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = true);
   try {
     const r = await fetch('/avaliacoes', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -90,11 +94,16 @@ async function salvarNota(decisaoId, nota) {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     notas[String(decisaoId)] = nota;
-    msg.innerHTML = '<span class="text-success">Nota salva.</span>';
     render();
-    if (idx < analises.length - 1) { setTimeout(() => { idx++; render(); }, 250); }
-    else { msg.innerHTML = '<span class="text-success">Obrigado! Você avaliou todas as análises. 🎉</span>'; }
+    document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = true);
+    if (idx < analises.length - 1) {
+      msg.innerHTML = '<span class="text-success">Nota salva.</span>';
+      setTimeout(() => { idx++; render(); }, 250);
+    } else {
+      msg.innerHTML = '<span class="text-success">Obrigado! Você avaliou todas as análises. 🎉</span>';
+    }
   } catch (e) {
+    document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = false);
     msg.innerHTML = `<span class="text-danger">Erro ao salvar: ${escapeHtml(String(e))}</span>`;
   }
 }
