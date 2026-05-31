@@ -22,3 +22,12 @@ def test_settings_provider_inválido_levanta(monkeypatch):
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_estudo_token_default_e_override(monkeypatch):
+    from backend.config import Settings
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "x")
+    monkeypatch.delenv("ESTUDO_TOKEN", raising=False)
+    assert Settings().estudo_token == "troque-este-token"
+    monkeypatch.setenv("ESTUDO_TOKEN", "segredo123")
+    assert Settings().estudo_token == "segredo123"
