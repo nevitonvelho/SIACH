@@ -131,10 +131,11 @@ def gerar_casos_de_bucket(bucket: pd.Series, rng) -> list[dict]:
     n = min(int(bucket["numero_de_operacoes"]), MAX_PER_BUCKET)
     if n <= 0:
         return []
+    submodalidade = str(bucket["submodalidade"]).strip()
     media_valor = bucket["carteira_ativa"] / max(int(bucket["numero_de_operacoes"]), 1)
     p_inad = float(np.clip(bucket["carteira_inadimplencia"] / bucket["carteira_ativa"], 0.0, 1.0))
-    submodalidade_norm = _normaliza_submodalidade(bucket["submodalidade"])
-    prazo_lo, prazo_hi = SUBM_PRAZOS.get(bucket["submodalidade"], (6, 36))
+    submodalidade_norm = _normaliza_submodalidade(submodalidade)
+    prazo_lo, prazo_hi = SUBM_PRAZOS.get(submodalidade, (6, 36))
 
     casos = []
     for _ in range(n):
@@ -166,10 +167,10 @@ def gerar_casos_de_bucket(bucket: pd.Series, rng) -> list[dict]:
             "tempo_emprego_meses": tempo_emprego,
             "valor_solicitado": round(min(valor, renda * 5), 2),
             "prazo_meses": prazo,
-            "finalidade": SUBM_FINALIDADES.get(bucket["submodalidade"], "outros"),
+            "finalidade": SUBM_FINALIDADES.get(submodalidade, "outros"),
             "score_interno": score,
             "divida_aberto": round(divida, 2),
-            "tipo_garantia": SUBM_GARANTIAS.get(bucket["submodalidade"], "sem_garantia"),
+            "tipo_garantia": SUBM_GARANTIAS.get(submodalidade, "sem_garantia"),
             "area_propriedade_ha": round(float(rng.lognormal(mean=3.5, sigma=0.7) * (renda / 100_000) ** 0.5), 1),
             "var_produtividade_pct": round(float(rng.normal(-2 + (-8 if inadimpliu else 0), 8)), 1),
             "renegociacoes_recentes": int(rng.poisson(1.4 if inadimpliu else 0.4)),

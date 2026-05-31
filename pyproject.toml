@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=2.2",
     "scikit-learn>=1.5",
     "python-multipart>=0.0.12",
+    "sentence-transformers>=3.0",
 ]
 
 [dependency-groups]
