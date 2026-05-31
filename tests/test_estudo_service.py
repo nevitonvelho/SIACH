@@ -24,31 +24,83 @@ def _decisao(rec="aprovado"):
     )
 
 
-def test_seed_estudo_idempotente(tmp_path):
-    from backend.services import estudo
-    Session = _session(tmp_path)
-
+def _mock_pipeline(estudo):
     fake_parecer = MagicMock()
     fake_parecer.recomendacao.value = "aprovado"
     fake_parecer.confianca = 0.8
     fake_parecer.model_dump_json.return_value = '{"recomendacao":"aprovado"}'
+    rag = patch.object(estudo, "RAGService")
+    ac = patch.object(estudo, "AnaliseChain")
+    hc = patch.object(estudo, "HumanizacaoChain")
+    narr = patch.object(estudo, "gerar_narrativa", return_value="n")
+    RAG, AC, HC, _ = rag.start(), ac.start(), hc.start(), narr.start()
+    RAG.return_value.recuperar.return_value = []
+    AC.return_value.run.return_value = fake_parecer
+    HC.return_value.run.return_value = "humanizado"
+    return [rag, ac, hc, narr]
 
-    with patch.object(estudo, "RAGService") as RAG, \
-         patch.object(estudo, "AnaliseChain") as AC, \
-         patch.object(estudo, "HumanizacaoChain") as HC, \
-         patch.object(estudo, "gerar_narrativa", return_value="n"):
-        RAG.return_value.recuperar.return_value = []
-        AC.return_value.run.return_value = fake_parecer
-        HC.return_value.run.return_value = "humanizado"
+
+def test_seed_estudo_idempotente(tmp_path):
+    from backend.services import estudo
+    Session = _session(tmp_path)
+    patches = _mock_pipeline(estudo)
+    try:
         with Session() as s:
-            ids1 = estudo.seed_estudo(s)
-            ids2 = estudo.seed_estudo(s)  # idempotente
+            ids1 = estudo.seed_estudo(s, "analista-1")
+            ids2 = estudo.seed_estudo(s, "analista-1")  # idempotente
+    finally:
+        for p in patches:
+            p.stop()
 
     assert len(ids1) == 10
     assert ids1 == ids2
     with Session() as s:
         assert s.query(EstudoItem).count() == 10
         assert s.query(Decisao).count() == 10
+        itens = s.query(EstudoItem).all()
+        assert all(i.analista == "analista-1" for i in itens)
+
+
+def test_seed_estudo_conjuntos_distintos_por_analista(tmp_path):
+    from backend.services import estudo
+    Session = _session(tmp_path)
+    patches = _mock_pipeline(estudo)
+    try:
+        with Session() as s:
+            estudo.seed_estudo(s, "analista-2")
+            estudo.seed_estudo(s, "analista-3")
+    finally:
+        for p in patches:
+            p.stop()
+
+    with Session() as s:
+        assert s.query(EstudoItem).count() == 20
+        a2 = s.query(EstudoItem).filter(EstudoItem.analista == "analista-2").count()
+        a3 = s.query(EstudoItem).filter(EstudoItem.analista == "analista-3").count()
+        assert a2 == 10 and a3 == 10
+
+
+def test_seed_estudo_analista_desconhecido(tmp_path):
+    import pytest
+    from backend.services import estudo
+    Session = _session(tmp_path)
+    with Session() as s:
+        with pytest.raises(ValueError):
+            estudo.seed_estudo(s, "fulano")
+
+
+def test_solicitacoes_por_analista_todas_validas():
+    from backend.schemas import SolicitacaoCredito
+    from backend.services.estudo import ANALISTAS, SOLICITACOES_POR_ANALISTA
+    assert set(SOLICITACOES_POR_ANALISTA) == set(ANALISTAS)
+    total = 0
+    for nome in ANALISTAS:
+        sols = SOLICITACOES_POR_ANALISTA[nome]
+        assert len(sols) == 10
+        for d in sols:
+            SolicitacaoCredito(**d)  # valida (levanta se inválido)
+        total += len(sols)
+    assert total == 50
 
 
 def test_upsert_avaliacao_atualiza(tmp_path):
@@ -82,6 +134,25 @@ def test_agregar_resultados(tmp_path):
     por_analise = {p["decisao_id"]: p for p in res["por_analise"]}
     assert por_analise[did]["media"] == 7.0
     assert por_analise[did]["n_notas"] == 2
+
+
+def test_agregar_faltam_por_conjunto(tmp_path):
+    from backend.schemas import AvaliacaoPayload
+    from backend.services import estudo
+    Session = _session(tmp_path)
+    with Session() as s:
+        d1 = _decisao(); d2 = _decisao(); s.add_all([d1, d2]); s.commit()
+        s.add(EstudoItem(decisao_id=d1.id, ordem=1, analista="analista-2"))
+        s.add(EstudoItem(decisao_id=d2.id, ordem=2, analista="analista-2"))
+        s.commit()
+        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="analista-2", decisao_id=d1.id, nota=7))
+
+    with Session() as s:
+        res = estudo.agregar_resultados(s)
+    pa = {p["analista"]: p for p in res["por_analista"]}
+    assert pa["analista-2"]["atribuidas"] == 2
+    assert pa["analista-2"]["avaliadas"] == 1
+    assert pa["analista-2"]["faltam"] == 1
 
 
 def test_gerar_csv(tmp_path):

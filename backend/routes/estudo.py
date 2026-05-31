@@ -32,15 +32,24 @@ def pagina_resultados():
 
 
 @router.get("/estudo/analises")
-def listar_analises(db: Session = Depends(get_db)) -> list[dict]:
-    itens = db.scalars(select(EstudoItem).order_by(EstudoItem.ordem)).all()
+def listar_analises(
+    analista: str = Query(""), db: Session = Depends(get_db),
+) -> list[dict]:
+    q = select(EstudoItem).order_by(EstudoItem.ordem)
+    if analista:
+        q = (
+            select(EstudoItem)
+            .where(EstudoItem.analista == analista)
+            .order_by(EstudoItem.ordem)
+        )
+    itens = db.scalars(q).all()
     out = []
     for item in itens:
         d = db.get(Decisao, item.decisao_id)
         if d is None:
             continue
         out.append({
-            "decisao_id": d.id, "ordem": item.ordem,
+            "decisao_id": d.id, "ordem": item.ordem, "analista": item.analista,
             "recomendacao": d.recomendacao, "confianca": d.confianca,
             "dados_solicitante": d.dados_solicitante,
             "parecer_humanizado": d.parecer_humanizado,
@@ -69,10 +78,20 @@ def registrar_avaliacao(
 
 
 @router.post("/estudo/seed")
-def seed(token: str = Query(""), db: Session = Depends(get_db)) -> dict:
+def seed(
+    token: str = Query(""), analista: str = Query(""),
+    db: Session = Depends(get_db),
+) -> dict:
     _check_token(token)
-    ids = svc.seed_estudo(db)
-    return {"decisao_ids": ids, "total": len(ids)}
+    alvos = [analista] if analista else svc.ANALISTAS
+    seeded: dict[str, int] = {}
+    try:
+        for nome in alvos:
+            ids = svc.seed_estudo(db, nome)
+            seeded[nome] = len(ids)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"seeded": seeded, "total": sum(seeded.values())}
 
 
 @router.get("/resultados/dados")

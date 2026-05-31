@@ -56,13 +56,32 @@ def _restore_seed_data() -> None:
         shutil.copytree(bundled_chroma, chroma_dest, dirs_exist_ok=True)
 
 
+def _migrate_estudo_analista(engine) -> None:
+    """Migração leve: garante a coluna estudo_item.analista e atribui itens
+    legados (sem analista) ao 'analista-1' — o conjunto compartilhado original
+    passou a ser o conjunto exclusivo do analista-1. Idempotente."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "estudo_item" not in insp.get_table_names():
+        return
+    cols = [c["name"] for c in insp.get_columns("estudo_item")]
+    if "analista" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE estudo_item ADD COLUMN analista VARCHAR(64)"))
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE estudo_item SET analista='analista-1' WHERE analista IS NULL"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _restore_seed_data()
     # Garante que as tabelas existam (idempotente) mesmo em volume zerado.
     from backend.db import Base, get_engine
 
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    _migrate_estudo_analista(engine)
     yield
 
 

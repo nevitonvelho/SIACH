@@ -62,6 +62,8 @@ class EstudoItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     decisao_id: Mapped[int] = mapped_column(ForeignKey("decisao.id"), unique=True)
     ordem: Mapped[int] = mapped_column(Integer)
+    # Analista dono deste item do estudo (cada analista tem seu próprio conjunto).
+    analista: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Avaliacao(Base):

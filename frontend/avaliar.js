@@ -14,7 +14,7 @@ function escapeHtml(s) {
 
 async function carregar() {
   const [a, n] = await Promise.all([
-    fetch('/estudo/analises').then(r => r.json()),
+    fetch(`/estudo/analises?analista=${encodeURIComponent(analista)}`).then(r => r.json()),
     fetch(`/avaliacoes/${encodeURIComponent(analista)}`).then(r => r.json()),
   ]);
   analises = a;

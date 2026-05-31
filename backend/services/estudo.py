@@ -81,18 +81,78 @@ SOLICITACOES_ESTUDO: list[dict] = [
      "atividade_principal": "agricultura"},
 ]
 
+# Os 5 analistas do estudo. Cada um recebe 10 análises EXCLUSIVas (50 no total).
+ANALISTAS: list[str] = [f"analista-{i}" for i in range(1, 6)]
 
-def seed_estudo(session: Session) -> list[int]:
-    """Gera as 10 análises do estudo pelo pipeline real. Idempotente:
-    se já há 10 itens, retorna os decisao_id existentes sem recriar."""
+_UFS = ["PR", "RS", "MT", "GO", "BA", "MG", "SP", "MS", "TO", "SC", "PA", "CE", "DF", "ES"]
+_ATIVIDADES = ["agricultura", "pecuaria", "mista"]
+_SUBMOD = ["Custeio", "Investimento", "Comercializacao", "Industrializacao"]
+_GARANTIAS = ["penhor_safra", "hipoteca", "aval", "fiador", "sem_garantia", "alienacao_fiduciaria"]
+_FINALIDADES = [
+    "custeio_agricola", "aquisicao_animais", "beneficiamento",
+    "comercializacao", "maquinario", "custeio_pecuario",
+]
+_CIVIL = ["solteiro", "casado", "viuvo", "divorciado"]
+_OCUPACOES = ["Produtor rural", "Pecuarista", "Agroindústria", "Cafeicultor", "Cooperativa"]
+
+
+def _solicitacoes_variadas(n: int, offset: int = 0) -> list[dict]:
+    """Gera n solicitações sintéticas variadas e válidas, de forma determinística
+    (sem aleatoriedade), usando o índice para percorrer perfis distintos."""
+    out: list[dict] = []
+    for k in range(n):
+        i = offset + k
+        out.append({
+            "uf": _UFS[i % len(_UFS)],
+            "tipo_cliente": "PJ" if i % 5 == 0 else "PF",
+            "cnae_ocupacao": _OCUPACOES[i % len(_OCUPACOES)],
+            "submodalidade": _SUBMOD[i % len(_SUBMOD)],
+            "idade": 25 + (i * 3) % 50,                       # 25..74
+            "renda_anual": float(30000 + (i * 25000) % 970000),
+            "estado_civil": _CIVIL[i % len(_CIVIL)],
+            "dependentes": i % 4,
+            "tempo_emprego_meses": 12 + (i * 11) % 348,
+            "valor_solicitado": float(20000 + (i * 15000) % 480000),
+            "prazo_meses": 12 + (i * 6) % 48,                 # 12..59
+            "finalidade": _FINALIDADES[i % len(_FINALIDADES)],
+            "score_interno": 350 + (i * 37) % 600,            # 350..949
+            "divida_aberto": float((i * 5000) % 120000),
+            "tipo_garantia": _GARANTIAS[i % len(_GARANTIAS)],
+            "area_propriedade_ha": float(10 + (i * 13) % 490),  # >0
+            "var_produtividade_pct": float(-20 + (i * 7) % 40),
+            "renegociacoes_recentes": i % 4,
+            "atividade_principal": _ATIVIDADES[i % len(_ATIVIDADES)],
+        })
+    return out
+
+
+# Conjunto de 10 solicitações por analista (50 distintas, sem sobreposição).
+# analista-1 reaproveita as 10 curadas; os demais recebem conjuntos gerados.
+SOLICITACOES_POR_ANALISTA: dict[str, list[dict]] = {
+    "analista-1": SOLICITACOES_ESTUDO,
+    "analista-2": _solicitacoes_variadas(10, offset=10),
+    "analista-3": _solicitacoes_variadas(10, offset=20),
+    "analista-4": _solicitacoes_variadas(10, offset=30),
+    "analista-5": _solicitacoes_variadas(10, offset=40),
+}
+
+
+def seed_estudo(session: Session, analista: str) -> list[int]:
+    """Gera as 10 análises do conjunto de um analista, pelo pipeline real.
+    Idempotente: se o analista já tem o conjunto completo, retorna os
+    decisao_id existentes sem recriar."""
+    sols = SOLICITACOES_POR_ANALISTA.get(analista)
+    if sols is None:
+        raise ValueError(f"Analista desconhecido: {analista}")
+
     existentes = session.scalars(
-        select(EstudoItem).order_by(EstudoItem.ordem)
+        select(EstudoItem).where(EstudoItem.analista == analista).order_by(EstudoItem.ordem)
     ).all()
-    if len(existentes) >= len(SOLICITACOES_ESTUDO):
+    if len(existentes) >= len(sols):
         return [e.decisao_id for e in existentes]
 
     ids: list[int] = []
-    for ordem, dados in enumerate(SOLICITACOES_ESTUDO, start=1):
+    for ordem, dados in enumerate(sols, start=1):
         solicitacao = SolicitacaoCredito(**dados)
         narrativa = gerar_narrativa(solicitacao)
         similares = RAGService().recuperar(narrativa, k=5)
@@ -104,7 +164,7 @@ def seed_estudo(session: Session) -> list[int]:
             session=session, solicitacao_id=ordem, solicitacao=solicitacao,
             parecer=parecer, parecer_humanizado=humanizado, casos_similares=similares,
         )
-        session.add(EstudoItem(decisao_id=decisao.id, ordem=ordem))
+        session.add(EstudoItem(decisao_id=decisao.id, ordem=ordem, analista=analista))
         session.commit()
         ids.append(decisao.id)
     return ids
@@ -132,10 +192,11 @@ def upsert_avaliacao(session: Session, payload: AvaliacaoPayload) -> Avaliacao:
 
 
 def agregar_resultados(session: Session) -> dict:
-    total_itens = session.scalar(select(func.count()).select_from(EstudoItem)) or 0
+    itens = session.scalars(select(EstudoItem).order_by(EstudoItem.analista, EstudoItem.ordem)).all()
+    total_itens = len(itens)
 
     por_analise = []
-    itens = session.scalars(select(EstudoItem).order_by(EstudoItem.ordem)).all()
+    itens_por_analista: dict[str, int] = {}
     for item in itens:
         d = session.get(Decisao, item.decisao_id)
         notas = session.scalars(
@@ -144,22 +205,28 @@ def agregar_resultados(session: Session) -> dict:
         media = round(sum(notas) / len(notas), 2) if notas else None
         por_analise.append({
             "decisao_id": item.decisao_id, "ordem": item.ordem,
+            "analista": item.analista,
             "recomendacao": d.recomendacao if d else None,
             "media": media, "n_notas": len(notas),
         })
+        if item.analista:
+            itens_por_analista[item.analista] = itens_por_analista.get(item.analista, 0) + 1
 
+    # Considera tanto analistas com itens atribuídos quanto os que já avaliaram.
+    nomes = set(itens_por_analista) | set(
+        session.scalars(select(Avaliacao.analista).distinct()).all()
+    )
     por_analista = []
-    analistas = session.scalars(
-        select(Avaliacao.analista).distinct().order_by(Avaliacao.analista)
-    ).all()
-    for nome in analistas:
+    for nome in sorted(nomes):
         notas = session.scalars(
             select(Avaliacao.nota).where(Avaliacao.analista == nome)
         ).all()
         media = round(sum(notas) / len(notas), 2) if notas else None
+        atribuidas = itens_por_analista.get(nome, 0)
         por_analista.append({
             "analista": nome, "media": media,
-            "avaliadas": len(notas), "faltam": max(total_itens - len(notas), 0),
+            "avaliadas": len(notas), "atribuidas": atribuidas,
+            "faltam": max(atribuidas - len(notas), 0),
         })
 
     return {"total_itens": total_itens, "por_analise": por_analise, "por_analista": por_analista}

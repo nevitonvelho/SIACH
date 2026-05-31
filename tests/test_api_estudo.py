@@ -87,3 +87,36 @@ def test_estudo_analises_lista(tmp_path_factory):
     assert len(itens) == 1
     assert itens[0]["decisao_id"] == did
     assert itens[0]["parecer_humanizado"] == "texto"
+
+
+def test_estudo_analises_filtra_por_analista(tmp_path_factory):
+    engine = create_engine(f"sqlite:///{tmp_path_factory.mktemp('db2')/'b.db'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    with Session() as s:
+        for nome in ("analista-1", "analista-2"):
+            d = Decisao(
+                solicitacao_id=1, timestamp=datetime.now(UTC),
+                dados_solicitante={"atividade_principal": "agricultura"},
+                casos_similares=[], parecer_tecnico='{"recomendacao":"aprovado"}',
+                parecer_humanizado="t", recomendacao="aprovado", confianca=0.8,
+                status_feedback="pendente",
+            )
+            s.add(d); s.commit()
+            s.add(EstudoItem(decisao_id=d.id, ordem=1, analista=nome)); s.commit()
+
+    def _get_db():
+        ss = Session()
+        try:
+            yield ss
+        finally:
+            ss.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    client = TestClient(app)
+    r_filtrado = client.get("/estudo/analises?analista=analista-2")
+    r_todos = client.get("/estudo/analises")
+    app.dependency_overrides.clear()
+    assert len(r_filtrado.json()) == 1
+    assert r_filtrado.json()[0]["analista"] == "analista-2"
+    assert len(r_todos.json()) == 2
