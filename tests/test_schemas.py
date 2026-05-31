@@ -67,3 +67,16 @@ def test_feedback_aprovado():
 def test_feedback_ajustado_exige_texto():
     with pytest.raises(ValidationError):
         FeedbackPayload(status="ajustado")  # falta parecer_ajustado
+
+
+def test_avaliacao_payload_valida_nota():
+    import pytest
+    from pydantic import ValidationError
+    from backend.schemas import AvaliacaoPayload
+
+    ok = AvaliacaoPayload(analista="ana", decisao_id=1, nota=10)
+    assert ok.nota == 10
+    with pytest.raises(ValidationError):
+        AvaliacaoPayload(analista="ana", decisao_id=1, nota=11)
+    with pytest.raises(ValidationError):
+        AvaliacaoPayload(analista="ana", decisao_id=1, nota=-1)

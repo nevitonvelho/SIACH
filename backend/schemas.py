@@ -72,3 +72,9 @@ class FeedbackPayload(BaseModel):
         if self.status == "ajustado" and not self.parecer_ajustado:
             raise ValueError("parecer_ajustado é obrigatório quando status=ajustado")
         return self
+
+
+class AvaliacaoPayload(BaseModel):
+    analista: str = Field(min_length=1, max_length=64)
+    decisao_id: int
+    nota: int = Field(ge=0, le=10)
