@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import make_url
 
 from backend.config import get_settings
-from backend.routes import analise, feedback, historico
+from backend.routes import analise, estudo, feedback, historico
 
 _REPO_ROOT = Path(__file__).parent.parent
 _FRONTEND_DIR = _REPO_ROOT / "frontend"
@@ -70,6 +70,7 @@ app = FastAPI(title="SIACH", version="0.1.0", lifespan=lifespan)
 app.include_router(analise.router)
 app.include_router(feedback.router)
 app.include_router(historico.router)
+app.include_router(estudo.router)
 
 
 @app.get("/health")
