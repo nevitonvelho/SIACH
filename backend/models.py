@@ -1,5 +1,7 @@
 from datetime import datetime
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String
+from sqlalchemy import (
+    JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.db import Base
@@ -52,3 +54,24 @@ class Decisao(Base):
 
     status_feedback: Mapped[str] = mapped_column(String(16), default="pendente")
     parecer_ajustado: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class EstudoItem(Base):
+    __tablename__ = "estudo_item"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decisao_id: Mapped[int] = mapped_column(ForeignKey("decisao.id"), unique=True)
+    ordem: Mapped[int] = mapped_column(Integer)
+
+
+class Avaliacao(Base):
+    __tablename__ = "avaliacao"
+    __table_args__ = (
+        UniqueConstraint("analista", "decisao_id", name="uq_analista_decisao"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    analista: Mapped[str] = mapped_column(String(64))
+    decisao_id: Mapped[int] = mapped_column(ForeignKey("decisao.id"))
+    nota: Mapped[int] = mapped_column(Integer)
+    timestamp: Mapped[datetime] = mapped_column(DateTime)
