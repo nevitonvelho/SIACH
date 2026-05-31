@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./siach.db"
     chroma_dir: str = "./chroma_db"
     log_level: str = "INFO"
+    estudo_token: str = "troque-este-token"
 
     anthropic_model_analise: str = "claude-sonnet-4-6"
     anthropic_model_humanizacao: str = "claude-haiku-4-5-20251001"

@@ -56,3 +56,29 @@ def test_decisao_persiste_com_json():
         loaded = s.get(Decisao, d.id)
         assert loaded.dados_solicitante == {"idade": 30}
         assert loaded.casos_similares[0]["score"] == 0.92
+
+
+def test_estudo_item_e_avaliacao(tmp_path):
+    from datetime import datetime, UTC
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import sessionmaker
+    from backend.db import Base
+    from backend.models import Avaliacao, EstudoItem
+
+    engine = create_engine(f"sqlite:///{tmp_path/'m.db'}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    with Session() as s:
+        s.add(EstudoItem(decisao_id=1, ordem=1))
+        s.add(Avaliacao(analista="ana", decisao_id=1, nota=8, timestamp=datetime.now(UTC)))
+        s.commit()
+
+    with Session() as s:
+        s.add(Avaliacao(analista="ana", decisao_id=1, nota=3, timestamp=datetime.now(UTC)))
+        try:
+            s.commit()
+            assert False, "esperava IntegrityError"
+        except IntegrityError:
+            s.rollback()
