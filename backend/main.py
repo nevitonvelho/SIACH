@@ -13,26 +13,47 @@ _REPO_ROOT = Path(__file__).parent.parent
 _FRONTEND_DIR = _REPO_ROOT / "frontend"
 
 
+def _db_has_data(db_file: Path) -> bool:
+    """True se o SQLite existe e já tem a tabela 'decisao' (i.e. dados reais).
+    Um arquivo vazio criado por uma conexão anterior conta como SEM dados."""
+    if not db_file.exists() or db_file.stat().st_size == 0:
+        return False
+    import sqlite3
+
+    try:
+        con = sqlite3.connect(str(db_file))
+        try:
+            row = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='decisao'"
+            ).fetchone()
+        finally:
+            con.close()
+        return row is not None
+    except sqlite3.Error:
+        return False
+
+
 def _restore_seed_data() -> None:
     """No primeiro boot (volume vazio), copia o banco e os vetores versionados
     no repositório para o caminho persistente (ex.: /data). Em boots seguintes,
     se os dados já existem no volume, não sobrescreve."""
     s = get_settings()
 
-    # SQLite: copia siach.db do repo -> caminho do volume, se ainda não existir
+    # SQLite: restaura se o banco do volume não existe ou está vazio (sem tabelas).
     db_path = make_url(s.database_url).database
     if db_path:
         dest = Path(db_path)
         bundled = _REPO_ROOT / "siach.db"
-        if not dest.exists() and bundled.exists():
+        if bundled.exists() and not _db_has_data(dest):
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(bundled, dest)
 
-    # ChromaDB: copia chroma_db/ do repo -> caminho do volume, se ainda não existir
+    # ChromaDB: restaura se o diretório do volume não existe ou está vazio.
     chroma_dest = Path(s.chroma_dir)
     bundled_chroma = _REPO_ROOT / "chroma_db"
-    if not chroma_dest.exists() and bundled_chroma.exists():
-        shutil.copytree(bundled_chroma, chroma_dest)
+    chroma_empty = not chroma_dest.exists() or not any(chroma_dest.iterdir())
+    if bundled_chroma.exists() and chroma_empty:
+        shutil.copytree(bundled_chroma, chroma_dest, dirs_exist_ok=True)
 
 
 @asynccontextmanager
