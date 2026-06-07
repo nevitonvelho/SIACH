@@ -73,6 +73,20 @@ def _migrate_estudo_analista(engine) -> None:
         conn.execute(text("UPDATE estudo_item SET analista='analista-1' WHERE analista IS NULL"))
 
 
+def _migrate_avaliacao_comentario(engine) -> None:
+    """Migração leve: garante a coluna avaliacao.comentario (justificativa
+    opcional do analista). Idempotente."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if "avaliacao" not in insp.get_table_names():
+        return
+    cols = [c["name"] for c in insp.get_columns("avaliacao")]
+    if "comentario" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE avaliacao ADD COLUMN comentario VARCHAR"))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _restore_seed_data()
@@ -82,6 +96,7 @@ async def lifespan(app: FastAPI):
     engine = get_engine()
     Base.metadata.create_all(engine)
     _migrate_estudo_analista(engine)
+    _migrate_avaliacao_comentario(engine)
     yield
 
 

@@ -22,7 +22,16 @@ async function carregar() {
       <td><span class="recomendacao-${p.recomendacao}">${String(p.recomendacao).replace(/_/g,' ')}</span></td>
       <td><strong>${p.media ?? '—'}</strong></td>
       <td>${p.n_notas}</td>
+      <td>${(p.comentarios || []).length || '—'}</td>
     </tr>`).join('');
+
+  const comentarios = d.por_analise.flatMap(p =>
+    (p.comentarios || []).map(c => `
+      <li class="caso-similar">
+        <strong>${escapeHtml(c.analista)}</strong>
+        <span class="text-muted">· análise #${p.ordem} (decisão ${p.decisao_id})</span><br>
+        ${escapeHtml(c.texto)}
+      </li>`));
 
   const linhasAnalista = d.por_analista.map(p => `
     <tr>
@@ -33,16 +42,19 @@ async function carregar() {
     </tr>`).join('');
 
   cont.innerHTML = `
+    <p class="text-muted small">Escala Likert de 5 pontos: 1=Péssima · 2=Ruim · 3=Regular · 4=Boa · 5=Ótima.</p>
     <h2 class="h5">Por análise (${d.total_itens})</h2>
     <table class="table table-sm">
-      <thead><tr><th>Analista</th><th>Ordem</th><th>Decisão</th><th>Recomendação</th><th>Nota média</th><th>Nº notas</th></tr></thead>
-      <tbody>${linhasAnalise || '<tr><td colspan="6" class="text-muted">Sem itens.</td></tr>'}</tbody>
+      <thead><tr><th>Analista</th><th>Ordem</th><th>Decisão</th><th>Recomendação</th><th>Nota média (1–5)</th><th>Nº notas</th><th>Comentários</th></tr></thead>
+      <tbody>${linhasAnalise || '<tr><td colspan="7" class="text-muted">Sem itens.</td></tr>'}</tbody>
     </table>
     <h2 class="h5 mt-4">Por analista</h2>
     <table class="table table-sm">
-      <thead><tr><th>Analista</th><th>Nota média</th><th>Avaliadas</th><th>Faltam</th></tr></thead>
+      <thead><tr><th>Analista</th><th>Nota média (1–5)</th><th>Avaliadas</th><th>Faltam</th></tr></thead>
       <tbody>${linhasAnalista || '<tr><td colspan="4" class="text-muted">Nenhuma avaliação ainda.</td></tr>'}</tbody>
     </table>
+    <h2 class="h5 mt-4">Comentários dos analistas</h2>
+    <ul class="list-unstyled">${comentarios.join('') || '<li class="text-muted">Nenhum comentário ainda.</li>'}</ul>
   `;
 }
 

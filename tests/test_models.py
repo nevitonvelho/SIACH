@@ -72,7 +72,9 @@ def test_estudo_item_e_avaliacao(tmp_path):
 
     with Session() as s:
         s.add(EstudoItem(decisao_id=1, ordem=1))
-        s.add(Avaliacao(analista="ana", decisao_id=1, nota=8, timestamp=datetime.now(UTC)))
+        s.add(Avaliacao(
+            analista="ana", decisao_id=1, nota=4,
+            comentario="boa análise", timestamp=datetime.now(UTC)))
         s.commit()
 
     with Session() as s:

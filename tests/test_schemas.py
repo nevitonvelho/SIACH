@@ -74,9 +74,18 @@ def test_avaliacao_payload_valida_nota():
     from pydantic import ValidationError
     from backend.schemas import AvaliacaoPayload
 
-    ok = AvaliacaoPayload(analista="ana", decisao_id=1, nota=10)
-    assert ok.nota == 10
-    with pytest.raises(ValidationError):
-        AvaliacaoPayload(analista="ana", decisao_id=1, nota=11)
-    with pytest.raises(ValidationError):
-        AvaliacaoPayload(analista="ana", decisao_id=1, nota=-1)
+    ok = AvaliacaoPayload(analista="ana", decisao_id=1, nota=5)
+    assert ok.nota == 5
+    assert ok.comentario is None
+    for nota in (0, 6, 11, -1):
+        with pytest.raises(ValidationError):
+            AvaliacaoPayload(analista="ana", decisao_id=1, nota=nota)
+
+
+def test_avaliacao_payload_comentario_em_branco_vira_none():
+    from backend.schemas import AvaliacaoPayload
+
+    p = AvaliacaoPayload(analista="ana", decisao_id=1, nota=3, comentario="   ")
+    assert p.comentario is None
+    p2 = AvaliacaoPayload(analista="ana", decisao_id=1, nota=3, comentario="  útil  ")
+    assert p2.comentario == "útil"

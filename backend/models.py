@@ -75,5 +75,8 @@ class Avaliacao(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     analista: Mapped[str] = mapped_column(String(64))
     decisao_id: Mapped[int] = mapped_column(ForeignKey("decisao.id"))
+    # Escala Likert de 5 pontos (1=Péssima … 5=Ótima).
     nota: Mapped[int] = mapped_column(Integer)
+    # Justificativa/observação opcional do analista sobre a análise.
+    comentario: Mapped[str | None] = mapped_column(String, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime)

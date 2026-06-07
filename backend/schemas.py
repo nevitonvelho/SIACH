@@ -77,4 +77,14 @@ class FeedbackPayload(BaseModel):
 class AvaliacaoPayload(BaseModel):
     analista: str = Field(min_length=1, max_length=64)
     decisao_id: int
-    nota: int = Field(ge=0, le=10)
+    # Escala Likert de 5 pontos (1=Péssima … 5=Ótima).
+    nota: int = Field(ge=1, le=5)
+    # Justificativa opcional; em branco é tratado como ausência de comentário.
+    comentario: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _normaliza_comentario(self):
+        if self.comentario is not None:
+            texto = self.comentario.strip()
+            self.comentario = texto or None
+        return self

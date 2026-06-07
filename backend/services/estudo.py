@@ -180,11 +180,13 @@ def upsert_avaliacao(session: Session, payload: AvaliacaoPayload) -> Avaliacao:
     if av is None:
         av = Avaliacao(
             analista=payload.analista, decisao_id=payload.decisao_id,
-            nota=payload.nota, timestamp=datetime.now(UTC),
+            nota=payload.nota, comentario=payload.comentario,
+            timestamp=datetime.now(UTC),
         )
         session.add(av)
     else:
         av.nota = payload.nota
+        av.comentario = payload.comentario
         av.timestamp = datetime.now(UTC)
     session.commit()
     session.refresh(av)
@@ -199,15 +201,21 @@ def agregar_resultados(session: Session) -> dict:
     itens_por_analista: dict[str, int] = {}
     for item in itens:
         d = session.get(Decisao, item.decisao_id)
-        notas = session.scalars(
-            select(Avaliacao.nota).where(Avaliacao.decisao_id == item.decisao_id)
+        avals = session.scalars(
+            select(Avaliacao).where(Avaliacao.decisao_id == item.decisao_id)
         ).all()
+        notas = [a.nota for a in avals]
         media = round(sum(notas) / len(notas), 2) if notas else None
+        comentarios = [
+            {"analista": a.analista, "texto": a.comentario}
+            for a in avals if a.comentario
+        ]
         por_analise.append({
             "decisao_id": item.decisao_id, "ordem": item.ordem,
             "analista": item.analista,
             "recomendacao": d.recomendacao if d else None,
             "media": media, "n_notas": len(notas),
+            "comentarios": comentarios,
         })
         if item.analista:
             itens_por_analista[item.analista] = itens_por_analista.get(item.analista, 0) + 1
@@ -235,7 +243,10 @@ def agregar_resultados(session: Session) -> dict:
 def gerar_csv(session: Session) -> str:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["analista", "decisao_id", "ordem", "recomendacao", "nota", "timestamp"])
+    w.writerow([
+        "analista", "decisao_id", "ordem", "recomendacao",
+        "nota", "comentario", "timestamp",
+    ])
     ordem_por_decisao = {
         e.decisao_id: e.ordem for e in session.scalars(select(EstudoItem)).all()
     }
@@ -246,6 +257,7 @@ def gerar_csv(session: Session) -> str:
         d = session.get(Decisao, a.decisao_id)
         w.writerow([
             a.analista, a.decisao_id, ordem_por_decisao.get(a.decisao_id, ""),
-            d.recomendacao if d else "", a.nota, a.timestamp.isoformat(),
+            d.recomendacao if d else "", a.nota, a.comentario or "",
+            a.timestamp.isoformat(),
         ])
     return buf.getvalue()

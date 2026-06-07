@@ -40,24 +40,42 @@ def test_post_avaliacao_e_retomar(tmp_path_factory):
     app.dependency_overrides[get_db] = override
     client = TestClient(app)
 
-    r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": 7})
+    r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": 3})
     assert r.status_code == 200
-    r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": 9})
+    r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": 5})
     assert r.status_code == 200
 
     r = client.get("/avaliacoes/ana")
     app.dependency_overrides.clear()
     assert r.status_code == 200
-    assert r.json() == {str(did): 9}
+    assert r.json() == {str(did): {"nota": 5, "comentario": None}}
+
+
+def test_post_avaliacao_com_comentario(tmp_path_factory):
+    override, Session, did = _setup(tmp_path_factory)
+    app.dependency_overrides[get_db] = override
+    client = TestClient(app)
+
+    r = client.post("/avaliacoes", json={
+        "analista": "ana", "decisao_id": did, "nota": 4,
+        "comentario": "  Concordo, mas faltou citar a garantia.  ",
+    })
+    assert r.status_code == 200
+    assert r.json()["comentario"] == "Concordo, mas faltou citar a garantia."
+
+    r = client.get("/avaliacoes/ana")
+    app.dependency_overrides.clear()
+    assert r.json()[str(did)]["comentario"] == "Concordo, mas faltou citar a garantia."
 
 
 def test_post_avaliacao_nota_invalida(tmp_path_factory):
     override, Session, did = _setup(tmp_path_factory)
     app.dependency_overrides[get_db] = override
     client = TestClient(app)
-    r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": 11})
+    for nota in (0, 6, 11):
+        r = client.post("/avaliacoes", json={"analista": "ana", "decisao_id": did, "nota": nota})
+        assert r.status_code == 422, nota
     app.dependency_overrides.clear()
-    assert r.status_code == 422
 
 
 def test_resultados_dados_exige_token(tmp_path_factory):

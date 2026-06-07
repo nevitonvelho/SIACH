@@ -111,12 +111,15 @@ def test_upsert_avaliacao_atualiza(tmp_path):
         d = _decisao(); s.add(d); s.commit(); did = d.id
 
     with Session() as s:
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=5))
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=9))
+        estudo.upsert_avaliacao(
+            s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=2, comentario="primeiro"))
+        estudo.upsert_avaliacao(
+            s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=5, comentario="revisado"))
     with Session() as s:
         rows = s.query(Avaliacao).all()
         assert len(rows) == 1
-        assert rows[0].nota == 9
+        assert rows[0].nota == 5
+        assert rows[0].comentario == "revisado"
 
 
 def test_agregar_resultados(tmp_path):
@@ -126,14 +129,16 @@ def test_agregar_resultados(tmp_path):
     with Session() as s:
         d = _decisao(); s.add(d); s.commit(); did = d.id
         s.add(EstudoItem(decisao_id=did, ordem=1)); s.commit()
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=8))
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="bob", decisao_id=did, nota=6))
+        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=4))
+        estudo.upsert_avaliacao(
+            s, AvaliacaoPayload(analista="bob", decisao_id=did, nota=2, comentario="muito genérica"))
 
     with Session() as s:
         res = estudo.agregar_resultados(s)
     por_analise = {p["decisao_id"]: p for p in res["por_analise"]}
-    assert por_analise[did]["media"] == 7.0
+    assert por_analise[did]["media"] == 3.0
     assert por_analise[did]["n_notas"] == 2
+    assert por_analise[did]["comentarios"] == [{"analista": "bob", "texto": "muito genérica"}]
 
 
 def test_agregar_faltam_por_conjunto(tmp_path):
@@ -145,7 +150,7 @@ def test_agregar_faltam_por_conjunto(tmp_path):
         s.add(EstudoItem(decisao_id=d1.id, ordem=1, analista="analista-2"))
         s.add(EstudoItem(decisao_id=d2.id, ordem=2, analista="analista-2"))
         s.commit()
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="analista-2", decisao_id=d1.id, nota=7))
+        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="analista-2", decisao_id=d1.id, nota=4))
 
     with Session() as s:
         res = estudo.agregar_resultados(s)
@@ -162,9 +167,11 @@ def test_gerar_csv(tmp_path):
     with Session() as s:
         d = _decisao(); s.add(d); s.commit(); did = d.id
         s.add(EstudoItem(decisao_id=did, ordem=1)); s.commit()
-        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=8))
+        estudo.upsert_avaliacao(
+            s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=4, comentario="ok"))
     with Session() as s:
         csv_text = estudo.gerar_csv(s)
     linhas = csv_text.strip().splitlines()
-    assert linhas[0] == "analista,decisao_id,ordem,recomendacao,nota,timestamp"
-    assert any(l.startswith("ana,") for l in linhas[1:])
+    assert linhas[0] == "analista,decisao_id,ordem,recomendacao,nota,comentario,timestamp"
+    linha_ana = next(l for l in linhas[1:] if l.startswith("ana,"))
+    assert ",ok," in linha_ana

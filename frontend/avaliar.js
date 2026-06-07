@@ -1,9 +1,23 @@
 const analista = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '');
 document.getElementById('analista-label').textContent = analista ? `Olá, ${analista}` : '';
 
+// Escala Likert de 5 pontos com rótulos verbais.
+const LIKERT = [
+  { nota: 1, rotulo: 'Péssima' },
+  { nota: 2, rotulo: 'Ruim' },
+  { nota: 3, rotulo: 'Regular' },
+  { nota: 4, rotulo: 'Boa' },
+  { nota: 5, rotulo: 'Ótima' },
+];
+
+const PLACEHOLDER_COMENTARIO =
+  'Opcional — justifique sua nota se quiser. Ex.: "Acho que a recomendação errou porque…" ' +
+  'ou "Concordo, pois…". Anote qualquer observação sobre a análise gerada.';
+
 let analises = [];
-let notas = {};        // { decisao_id: nota }
+let avaliacoes = {};   // { decisao_id: { nota, comentario } }
 let idx = 0;
+let selecionada = null;  // nota selecionada (ainda não salva) do item atual
 
 function escapeHtml(s) {
   if (s == null) return '';
@@ -18,7 +32,7 @@ async function carregar() {
     fetch(`/avaliacoes/${encodeURIComponent(analista)}`).then(r => r.json()),
   ]);
   analises = a;
-  notas = n;
+  avaliacoes = n;
   if (!analises.length) {
     document.getElementById('conteudo').innerHTML =
       '<p class="text-muted">Nenhuma análise disponível ainda. Volte mais tarde.</p>';
@@ -27,7 +41,7 @@ async function carregar() {
     document.getElementById('btn-proxima').disabled = true;
     return;
   }
-  const primeiraSemNota = analises.findIndex(x => !(String(x.decisao_id) in notas));
+  const primeiraSemNota = analises.findIndex(x => !(String(x.decisao_id) in avaliacoes));
   idx = primeiraSemNota >= 0 ? primeiraSemNota : 0;
   render();
 }
@@ -37,13 +51,17 @@ function render() {
   const item = analises[idx];
   const pt = item.parecer_tecnico || {};
   const ds = item.dados_solicitante || {};
+  const atual = avaliacoes[String(item.decisao_id)] || null;
+  selecionada = atual ? atual.nota : null;
+
   document.getElementById('progresso').textContent = `Análise ${idx + 1} de ${analises.length}`;
-  const avaliadas = analises.filter(x => String(x.decisao_id) in notas).length;
+  const avaliadas = analises.filter(x => String(x.decisao_id) in avaliacoes).length;
   document.getElementById('contador').textContent = `${avaliadas}/${analises.length} avaliadas`;
 
-  const notaAtual = notas[String(item.decisao_id)];
-  const escala = Array.from({length: 11}, (_, i) =>
-    `<button class="nota-btn ${notaAtual === i ? 'ativa' : ''}" data-nota="${i}">${i}</button>`
+  const escala = LIKERT.map(l =>
+    `<button class="nota-btn ${selecionada === l.nota ? 'ativa' : ''}" data-nota="${l.nota}">
+       <span class="num">${l.nota}</span><span class="lbl">${l.rotulo}</span>
+     </button>`
   ).join('');
 
   const similares = (item.casos_similares || []).map(c =>
@@ -71,39 +89,59 @@ function render() {
         <h6>Casos similares</h6>
         <ul>${similares || '<li class="small text-muted">—</li>'}</ul>
       </details>
-      <label class="form-label fw-bold text-success">Sua nota para esta análise (0–10):</label>
-      <div class="nota-row" id="nota-row">${escala}</div>
+
+      <label class="form-label fw-bold text-success">Como você avalia a qualidade desta análise?</label>
+      <div class="likert-row" id="nota-row">${escala}</div>
+
+      <div class="mt-3">
+        <label class="form-label fw-bold" for="comentario">Comentário (opcional)</label>
+        <textarea id="comentario" class="form-control" rows="3"
+          placeholder="${escapeHtml(PLACEHOLDER_COMENTARIO)}">${escapeHtml(atual ? (atual.comentario || '') : '')}</textarea>
+      </div>
+
+      <button class="btn btn-success mt-3" id="btn-salvar">Salvar avaliação</button>
     </div>
   `;
 
   document.querySelectorAll('#nota-row .nota-btn').forEach(btn => {
-    btn.addEventListener('click', () => salvarNota(item.decisao_id, parseInt(btn.dataset.nota, 10)));
+    btn.addEventListener('click', () => {
+      selecionada = parseInt(btn.dataset.nota, 10);
+      document.querySelectorAll('#nota-row .nota-btn').forEach(b =>
+        b.classList.toggle('ativa', parseInt(b.dataset.nota, 10) === selecionada));
+    });
   });
+  document.getElementById('btn-salvar').addEventListener('click', () => salvar(item.decisao_id));
 
   document.getElementById('btn-anterior').disabled = idx === 0;
   document.getElementById('btn-proxima').disabled = idx >= analises.length - 1;
 }
 
-async function salvarNota(decisaoId, nota) {
+async function salvar(decisaoId) {
   const msg = document.getElementById('msg');
-  document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = true);
+  if (selecionada == null) {
+    msg.innerHTML = '<span class="text-danger">Escolha uma nota antes de salvar.</span>';
+    return;
+  }
+  const comentario = document.getElementById('comentario').value.trim() || null;
+  const btn = document.getElementById('btn-salvar');
+  btn.disabled = true;
   try {
     const r = await fetch('/avaliacoes', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ analista, decisao_id: decisaoId, nota }),
+      body: JSON.stringify({ analista, decisao_id: decisaoId, nota: selecionada, comentario }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    notas[String(decisaoId)] = nota;
-    render();
-    document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = true);
+    avaliacoes[String(decisaoId)] = { nota: selecionada, comentario };
     if (idx < analises.length - 1) {
-      msg.innerHTML = '<span class="text-success">Nota salva.</span>';
-      setTimeout(() => { idx++; render(); }, 250);
+      msg.innerHTML = '<span class="text-success">Avaliação salva.</span>';
+      setTimeout(() => { idx++; render(); }, 300);
     } else {
-      msg.innerHTML = '<span class="text-success">Obrigado! Você avaliou todas as análises. 🎉</span>';
+      render();
+      document.getElementById('msg').innerHTML =
+        '<span class="text-success">Obrigado! Você avaliou todas as análises. 🎉</span>';
     }
   } catch (e) {
-    document.querySelectorAll('#nota-row .nota-btn').forEach(b => b.disabled = false);
+    btn.disabled = false;
     msg.innerHTML = `<span class="text-danger">Erro ao salvar: ${escapeHtml(String(e))}</span>`;
   }
 }

@@ -64,7 +64,10 @@ def avaliacoes_do_analista(analista: str, db: Session = Depends(get_db)) -> dict
     rows = db.scalars(
         select(Avaliacao).where(Avaliacao.analista == analista)
     ).all()
-    return {str(r.decisao_id): r.nota for r in rows}
+    return {
+        str(r.decisao_id): {"nota": r.nota, "comentario": r.comentario}
+        for r in rows
+    }
 
 
 @router.post("/avaliacoes")
@@ -74,7 +77,10 @@ def registrar_avaliacao(
     if db.get(Decisao, payload.decisao_id) is None:
         raise HTTPException(status_code=404, detail="decisao não encontrada")
     av = svc.upsert_avaliacao(db, payload)
-    return {"id": av.id, "decisao_id": av.decisao_id, "nota": av.nota}
+    return {
+        "id": av.id, "decisao_id": av.decisao_id,
+        "nota": av.nota, "comentario": av.comentario,
+    }
 
 
 @router.post("/estudo/seed")
