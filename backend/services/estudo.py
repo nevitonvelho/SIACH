@@ -6,7 +6,7 @@ import csv
 import io
 from datetime import datetime, UTC
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from backend.models import Avaliacao, Decisao, EstudoItem
@@ -81,8 +81,8 @@ SOLICITACOES_ESTUDO: list[dict] = [
      "atividade_principal": "agricultura"},
 ]
 
-# Os 5 analistas do estudo. Cada um recebe 10 análises EXCLUSIVas (50 no total).
-ANALISTAS: list[str] = [f"analista-{i}" for i in range(1, 6)]
+# Os analistas do estudo. Cada um recebe 10 análises EXCLUSIVas.
+ANALISTAS: list[str] = [f"analista-{i}" for i in range(1, 7)]
 
 _UFS = ["PR", "RS", "MT", "GO", "BA", "MG", "SP", "MS", "TO", "SC", "PA", "CE", "DF", "ES"]
 _ATIVIDADES = ["agricultura", "pecuaria", "mista"]
@@ -134,6 +134,7 @@ SOLICITACOES_POR_ANALISTA: dict[str, list[dict]] = {
     "analista-3": _solicitacoes_variadas(10, offset=20),
     "analista-4": _solicitacoes_variadas(10, offset=30),
     "analista-5": _solicitacoes_variadas(10, offset=40),
+    "analista-6": _solicitacoes_variadas(10, offset=50),
 }
 
 
@@ -168,6 +169,17 @@ def seed_estudo(session: Session, analista: str) -> list[int]:
         session.commit()
         ids.append(decisao.id)
     return ids
+
+
+def resetar_avaliacoes(session: Session, analista: str = "") -> int:
+    """Apaga avaliações. Sem analista, zera todas; com analista, só as dele.
+    Retorna o número de avaliações removidas. Não mexe nas análises (EstudoItem)."""
+    stmt = delete(Avaliacao)
+    if analista:
+        stmt = stmt.where(Avaliacao.analista == analista)
+    res = session.execute(stmt)
+    session.commit()
+    return res.rowcount or 0
 
 
 def upsert_avaliacao(session: Session, payload: AvaliacaoPayload) -> Avaliacao:

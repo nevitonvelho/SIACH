@@ -100,6 +100,16 @@ def seed(
     return {"seeded": seeded, "total": sum(seeded.values())}
 
 
+@router.post("/estudo/reset")
+def reset_avaliacoes(
+    token: str = Query(""), analista: str = Query(""),
+    db: Session = Depends(get_db),
+) -> dict:
+    _check_token(token)
+    removidas = svc.resetar_avaliacoes(db, analista)
+    return {"removidas": removidas, "analista": analista or "todos"}
+
+
 @router.get("/resultados/dados")
 def resultados_dados(token: str = Query(""), db: Session = Depends(get_db)) -> dict:
     _check_token(token)

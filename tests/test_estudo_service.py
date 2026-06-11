@@ -100,7 +100,7 @@ def test_solicitacoes_por_analista_todas_validas():
         for d in sols:
             SolicitacaoCredito(**d)  # valida (levanta se inválido)
         total += len(sols)
-    assert total == 50
+    assert total == len(ANALISTAS) * 10
 
 
 def test_upsert_avaliacao_atualiza(tmp_path):
@@ -120,6 +120,26 @@ def test_upsert_avaliacao_atualiza(tmp_path):
         assert len(rows) == 1
         assert rows[0].nota == 5
         assert rows[0].comentario == "revisado"
+
+
+def test_resetar_avaliacoes(tmp_path):
+    from backend.schemas import AvaliacaoPayload
+    from backend.services import estudo
+    Session = _session(tmp_path)
+    with Session() as s:
+        d = _decisao(); s.add(d); s.commit(); did = d.id
+        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="ana", decisao_id=did, nota=4))
+        estudo.upsert_avaliacao(s, AvaliacaoPayload(analista="bob", decisao_id=did, nota=2))
+
+    with Session() as s:
+        removidas = estudo.resetar_avaliacoes(s, analista="ana")
+        assert removidas == 1
+        assert s.query(Avaliacao).count() == 1  # restou só a do bob
+
+    with Session() as s:
+        removidas = estudo.resetar_avaliacoes(s)  # todas
+        assert removidas == 1
+        assert s.query(Avaliacao).count() == 0
 
 
 def test_agregar_resultados(tmp_path):
