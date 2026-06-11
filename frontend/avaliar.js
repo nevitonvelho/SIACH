@@ -113,7 +113,11 @@ function render() {
   document.getElementById('btn-salvar').addEventListener('click', () => salvar(item.decisao_id));
 
   document.getElementById('btn-anterior').disabled = idx === 0;
-  document.getElementById('btn-proxima').disabled = idx >= analises.length - 1;
+  // Só permite avançar se a análise atual já foi salva — evita que o analista
+  // pule itens sem avaliar (clicando "Próxima" sem salvar).
+  const btnProx = document.getElementById('btn-proxima');
+  btnProx.disabled = idx >= analises.length - 1 || atual === null;
+  btnProx.title = atual === null ? 'Salve a avaliação antes de avançar.' : '';
 }
 
 async function salvar(decisaoId) {
@@ -147,6 +151,14 @@ async function salvar(decisaoId) {
 }
 
 document.getElementById('btn-anterior').addEventListener('click', () => { if (idx > 0) { idx--; render(); } });
-document.getElementById('btn-proxima').addEventListener('click', () => { if (idx < analises.length - 1) { idx++; render(); } });
+document.getElementById('btn-proxima').addEventListener('click', () => {
+  const item = analises[idx];
+  if (item && !(String(item.decisao_id) in avaliacoes)) {
+    document.getElementById('msg').innerHTML =
+      '<span class="text-danger">Salve a avaliação desta análise antes de avançar.</span>';
+    return;
+  }
+  if (idx < analises.length - 1) { idx++; render(); }
+});
 
 carregar();
